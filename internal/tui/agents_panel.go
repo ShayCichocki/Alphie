@@ -56,6 +56,7 @@ func (p *AgentsPanel) SetAgents(agents []*models.Agent) {
 		p.agents = append(p.agents, &AgentCardData{
 			ID:         agent.ID,
 			Status:     agent.Status,
+			Error:      agent.Error,
 			TaskID:     agent.TaskID,
 			TokensUsed: agent.TokensUsed,
 			Cost:       agent.Cost,

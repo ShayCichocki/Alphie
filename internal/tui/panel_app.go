@@ -246,14 +246,26 @@ func (a *PanelApp) handleOrchestratorEvent(msg OrchestratorEventMsg) {
 		level = LogLevelError
 	}
 
-	// Add to logs
-	a.logsPanel.AddLog(PanelLogEntry{
-		Timestamp: msg.Timestamp,
-		Level:     level,
-		AgentID:   msg.AgentID,
-		TaskID:    msg.TaskID,
-		Message:   msg.Message,
-	})
+	// Handle progress events differently - aggregate instead of spam
+	if msg.Type == "agent_progress" {
+		a.logsPanel.UpdateProgress(msg.AgentID, PanelLogEntry{
+			Timestamp: msg.Timestamp,
+			Level:     level,
+			AgentID:   msg.AgentID,
+			TaskID:    msg.TaskID,
+			Message:   msg.Message,
+		})
+		// Also update agent state below, but don't add to logs
+	} else {
+		// Regular events: add to logs
+		a.logsPanel.AddLog(PanelLogEntry{
+			Timestamp: msg.Timestamp,
+			Level:     level,
+			AgentID:   msg.AgentID,
+			TaskID:    msg.TaskID,
+			Message:   msg.Message,
+		})
+	}
 
 	// Update agent/task state based on event type
 	switch msg.Type {
@@ -292,6 +304,8 @@ func (a *PanelApp) handleOrchestratorEvent(msg OrchestratorEventMsg) {
 			agent := a.findOrCreateAgent(msg.AgentID)
 			agent.Status = models.AgentStatusDone
 			a.agentsPanel.SetAgents(a.agents)
+			// Clear live progress for this agent
+			a.logsPanel.ClearProgress(msg.AgentID)
 		}
 		// Update task status
 		if msg.TaskID != "" {
@@ -305,7 +319,10 @@ func (a *PanelApp) handleOrchestratorEvent(msg OrchestratorEventMsg) {
 		if msg.AgentID != "" {
 			agent := a.findOrCreateAgent(msg.AgentID)
 			agent.Status = models.AgentStatusFailed
+			agent.Error = msg.Error // Store the error message
 			a.agentsPanel.SetAgents(a.agents)
+			// Clear live progress for this agent
+			a.logsPanel.ClearProgress(msg.AgentID)
 		}
 		// Update task status
 		if msg.TaskID != "" {

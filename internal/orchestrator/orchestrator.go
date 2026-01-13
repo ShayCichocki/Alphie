@@ -186,11 +186,16 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	// Session branch manager
 	sessionMgr := NewSessionBranchManager(sessionID, cfg.RepoPath, cfg.Greenfield)
 
-	// Merge handlers will be created after session branch is known
+	// Merge handlers - target session branch normally, or main directly in greenfield mode
 	var merger *MergeHandler
 	var semanticMerger *SemanticMerger
 	var secondReviewer *SecondReviewer
-	if !cfg.Greenfield {
+	if cfg.Greenfield {
+		// Greenfield: merge agent branches directly to main
+		merger = NewMergeHandler("main", cfg.RepoPath)
+		semanticMerger = NewSemanticMerger(cfg.MergerClaude, cfg.RepoPath)
+	} else {
+		// Normal: merge to session branch first
 		merger = NewMergeHandler(sessionMgr.GetBranchName(), cfg.RepoPath)
 		semanticMerger = NewSemanticMerger(cfg.MergerClaude, cfg.RepoPath)
 		// Second reviewer is optional - only created if Claude is configured
@@ -743,8 +748,8 @@ func (o *Orchestrator) handleTaskCompletion(ctx context.Context, taskID string, 
 			Timestamp: time.Now(),
 		})
 
-		// Merge if not greenfield
-		if !o.greenfield && o.merger != nil {
+		// Merge agent branch (to session branch, or directly to main in greenfield mode)
+		if o.merger != nil {
 			if err := o.performMerge(ctx, taskID, result); err != nil {
 				return fmt.Errorf("merge failed: %w", err)
 			}

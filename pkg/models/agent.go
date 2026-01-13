@@ -39,6 +39,8 @@ type Agent struct {
 	TaskID string `json:"task_id"`
 	// Status is the current state of the agent.
 	Status AgentStatus `json:"status"`
+	// Error contains the error message if the agent failed.
+	Error string `json:"error,omitempty"`
 	// WorktreePath is the path to the agent's git worktree.
 	WorktreePath string `json:"worktree_path,omitempty"`
 	// PID is the process ID of the running agent.

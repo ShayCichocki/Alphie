@@ -9,6 +9,7 @@ import (
 )
 
 var interactiveResume bool
+var interactiveGreenfield bool
 
 // CheckClaudeCLI verifies that the 'claude' CLI is available in PATH.
 // Returns an error with installation instructions if not found.
@@ -55,6 +56,7 @@ func Execute() {
 func init() {
 	// Add flags for interactive mode
 	rootCmd.Flags().BoolVar(&interactiveResume, "resume", false, "Resume incomplete tasks from previous sessions")
+	rootCmd.Flags().BoolVar(&interactiveGreenfield, "greenfield", false, "Direct merge to main (skip session branches)")
 
 	// Add subcommands
 	rootCmd.AddCommand(runCmd)

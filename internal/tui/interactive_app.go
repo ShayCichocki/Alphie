@@ -48,6 +48,12 @@ func (a *InteractiveApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			a.quitting = true
 			return a, tea.Quit
+
+		case "tab", "shift+tab":
+			// Forward navigation keys to PanelApp
+			var cmd tea.Cmd
+			_, cmd = a.panelApp.Update(msg)
+			return a, cmd
 		}
 
 	case tea.WindowSizeMsg:

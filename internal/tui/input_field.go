@@ -18,6 +18,11 @@ type TaskSubmittedMsg struct {
 type InputField struct {
 	input textinput.Model
 	width int
+
+	// History support
+	history []string // stored commands
+	histIdx int      // current position (-1 = typing new input)
+	draft   string   // saves current input when browsing history
 }
 
 // NewInputField creates a new InputField.
@@ -29,8 +34,10 @@ func NewInputField() *InputField {
 	ti.Width = 60
 
 	return &InputField{
-		input: ti,
-		width: 80,
+		input:   ti,
+		width:   80,
+		history: make([]string, 0),
+		histIdx: -1, // -1 = typing new input
 	}
 }
 
@@ -48,6 +55,11 @@ func (f *InputField) Update(msg tea.Msg) (*InputField, tea.Cmd) {
 		case "enter":
 			text := f.input.Value()
 			if text != "" {
+				// Add to history
+				f.history = append(f.history, text)
+				f.histIdx = -1
+				f.draft = ""
+
 				tier, cleanText := ClassifyTier(text)
 				f.input.Reset()
 				return f, func() tea.Msg {
@@ -57,6 +69,36 @@ func (f *InputField) Update(msg tea.Msg) (*InputField, tea.Cmd) {
 					}
 				}
 			}
+
+		case "up":
+			// Navigate to previous history entry
+			if len(f.history) > 0 {
+				if f.histIdx == -1 {
+					// Save current input as draft before navigating
+					f.draft = f.input.Value()
+					f.histIdx = len(f.history) - 1
+				} else if f.histIdx > 0 {
+					f.histIdx--
+				}
+				f.input.SetValue(f.history[f.histIdx])
+				f.input.CursorEnd()
+			}
+			return f, nil
+
+		case "down":
+			// Navigate to next history entry or back to draft
+			if f.histIdx >= 0 {
+				if f.histIdx < len(f.history)-1 {
+					f.histIdx++
+					f.input.SetValue(f.history[f.histIdx])
+				} else {
+					// Return to draft
+					f.histIdx = -1
+					f.input.SetValue(f.draft)
+				}
+				f.input.CursorEnd()
+			}
+			return f, nil
 		}
 	}
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -71,6 +72,18 @@ func runInteractive() error {
 		defer progClient.Close()
 	}
 
+	// Create worktree manager for cleanup
+	wtManager, err := agent.NewWorktreeManager("", repoPath)
+	if err != nil {
+		return fmt.Errorf("create worktree manager: %w", err)
+	}
+
+	// Startup cleanup: remove orphaned worktrees from previous interrupted sessions
+	activeSessions, _ := getActiveSessions() // Ignore errors, use empty list if query fails
+	if removed, err := wtManager.StartupCleanup(activeSessions); err == nil && removed > 0 {
+		log.Printf("[interactive] cleaned up %d orphaned worktree(s) from previous sessions", removed)
+	}
+
 	// Create executor (use sonnet as default model)
 	executor, err := agent.NewExecutor(agent.ExecutorConfig{
 		RepoPath: repoPath,
@@ -84,7 +97,7 @@ func runInteractive() error {
 	poolCfg := orchestrator.PoolConfig{
 		RepoPath:       repoPath,
 		TierConfigs:    tierConfigs,
-		Greenfield:     false,
+		Greenfield:     interactiveGreenfield,
 		Executor:       executor,
 		StateDB:        stateDB,
 		LearningSystem: learningSys,
@@ -118,11 +131,17 @@ func runInteractive() error {
 	// Create quick executor for !quick tasks
 	quickExec := orchestrator.NewQuickExecutor(repoPath)
 
+	// Track active tasks to know when ALL are done
+	var activeTaskCount int32
+
 	// Set task submit handler (runs async to avoid blocking TUI)
 	app.SetTaskSubmitHandler(func(task string, tier models.Tier) {
 		// Quick mode: single agent, no decomposition, direct execution
 		if tier == models.TierQuick {
+			atomic.AddInt32(&activeTaskCount, 1)
 			go func() {
+				defer atomic.AddInt32(&activeTaskCount, -1)
+
 				program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Quick: %s", task)})
 
 				result, err := quickExec.Execute(ctx, task)
@@ -145,12 +164,14 @@ func runInteractive() error {
 		}
 
 		// Submit async to avoid blocking the TUI
+		atomic.AddInt32(&activeTaskCount, 1)
 		go func() {
 			program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Queuing: %s (tier: %s)", task, tier)})
 
 			_, err := pool.Submit(task, tier)
 			if err != nil {
 				program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Failed to submit task: %v", err)})
+				atomic.AddInt32(&activeTaskCount, -1)
 				return
 			}
 
@@ -159,7 +180,7 @@ func runInteractive() error {
 	})
 
 	// Forward events from pool to TUI
-	go forwardPoolEventsToTUI(ctx, pool, program)
+	go forwardPoolEventsToTUI(ctx, pool, program, &activeTaskCount)
 
 	// If resume flag is set, load and submit incomplete tasks
 	if interactiveResume && progClient != nil {
@@ -175,6 +196,12 @@ func runInteractive() error {
 	// Stop pool on exit
 	if err := pool.Stop(); err != nil {
 		log.Printf("[interactive] warning: failed to stop pool: %v", err)
+	}
+
+	// Final cleanup: ensure all worktrees are cleaned up on exit
+	activeSessions, _ = getActiveSessions()
+	if removed, err := wtManager.CleanupOrphans(activeSessions, nil); err == nil && removed > 0 {
+		log.Printf("[interactive] cleaned up %d worktree(s) on exit", removed)
 	}
 
 	return nil
@@ -216,7 +243,7 @@ func resumeIncompleteTasks(program *tea.Program, pool *orchestrator.Orchestrator
 	}
 }
 
-func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.OrchestratorPool, program *tea.Program) {
+func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.OrchestratorPool, program *tea.Program, activeTaskCount *int32) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -243,13 +270,9 @@ func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.Orchestrator
 
 			program.Send(msg)
 
-			// Handle session done
-			if event.Type == orchestrator.EventSessionDone {
-				success := event.Error == nil
-				program.Send(tui.SessionDoneMsg{
-					Success: success,
-					Message: event.Message,
-				})
+			// Track task completion (no session done in interactive mode - users can keep submitting)
+			if event.Type == orchestrator.EventTaskCompleted || event.Type == orchestrator.EventTaskFailed {
+				atomic.AddInt32(activeTaskCount, -1)
 			}
 		}
 	}

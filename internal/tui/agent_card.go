@@ -15,6 +15,8 @@ type AgentCardData struct {
 	ID string
 	// Status is the agent's current status.
 	Status models.AgentStatus
+	// Error contains the error message if the agent failed.
+	Error string
 	// TaskID is the ID of the task the agent is working on.
 	TaskID string
 	// TaskTitle is the title of the current task.
@@ -115,14 +117,26 @@ func (c *AgentCard) View() string {
 	b.WriteString(statusStr)
 	b.WriteString("\n")
 
-	// Task ID (truncated)
-	taskID := c.data.TaskID
-	if len(taskID) > c.width-6 {
-		taskID = taskID[:c.width-9] + "..."
+	// Show error reason if failed, otherwise show task info
+	if c.data.Status == models.AgentStatusFailed && c.data.Error != "" {
+		// Error message (truncated to fit)
+		errMsg := c.data.Error
+		maxLen := c.width - 6
+		if len(errMsg) > maxLen {
+			errMsg = errMsg[:maxLen-3] + "..."
+		}
+		b.WriteString(c.statusFailed.Render(errMsg))
+		b.WriteString("\n")
+	} else {
+		// Task ID (truncated)
+		taskID := c.data.TaskID
+		if len(taskID) > c.width-6 {
+			taskID = taskID[:c.width-9] + "..."
+		}
+		b.WriteString(c.labelStyle.Render("Task: "))
+		b.WriteString(c.valueStyle.Render(taskID))
+		b.WriteString("\n")
 	}
-	b.WriteString(c.labelStyle.Render("Task: "))
-	b.WriteString(c.valueStyle.Render(taskID))
-	b.WriteString("\n")
 
 	// Tokens
 	tokensStr := formatTokensCompact(c.data.TokensUsed)
