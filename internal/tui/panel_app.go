@@ -355,6 +355,15 @@ func (a *PanelApp) handleOrchestratorEvent(msg OrchestratorEventMsg) {
 
 	// Update agent/task state based on event type
 	switch msg.Type {
+	case "task_entered":
+		// Immediate feedback when user submits a task (before orchestrator processes it)
+		if msg.TaskID != "" {
+			task := a.findOrCreateTask(msg.TaskID)
+			task.Title = msg.TaskTitle
+			task.Status = models.TaskStatusPending
+			a.tasksPanel.SetTasks(a.tasks)
+		}
+
 	case "task_queued":
 		if msg.TaskID != "" {
 			task := a.findOrCreateTask(msg.TaskID)

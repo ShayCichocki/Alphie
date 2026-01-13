@@ -10,6 +10,7 @@ import (
 )
 
 // TasksPanel displays a scrollable list of tasks with status indicators.
+// Tasks are split into two sections: Active (pending/running) and Completed (done/failed).
 type TasksPanel struct {
 	tasks        []*models.Task
 	selected     int
@@ -28,6 +29,7 @@ type TasksPanel struct {
 	doneStyle     lipgloss.Style
 	failedStyle   lipgloss.Style
 	blockedStyle  lipgloss.Style
+	sectionStyle  lipgloss.Style
 }
 
 // NewTasksPanel creates a new TasksPanel instance.
@@ -67,6 +69,10 @@ func NewTasksPanel() *TasksPanel {
 
 		blockedStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("214")), // Orange
+
+		sectionStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240")).
+			Italic(true),
 	}
 }
 
@@ -145,7 +151,7 @@ func (p *TasksPanel) ensureVisible() {
 	}
 }
 
-// View renders the tasks panel.
+// View renders the tasks panel with Active and Completed sections.
 func (p *TasksPanel) View() string {
 	var b strings.Builder
 
@@ -157,35 +163,50 @@ func (p *TasksPanel) View() string {
 	b.WriteString(p.titleStyle.Render(title))
 	b.WriteString("\n")
 
-	// Calculate visible area
-	contentHeight := p.height - 4 // Account for title, borders, padding
-	if contentHeight < 1 {
-		contentHeight = 1
-	}
-
 	if len(p.tasks) == 0 {
 		b.WriteString(p.normalStyle.Render("  No tasks"))
 	} else {
-		// Render visible tasks
-		endIdx := p.scrollOffset + contentHeight
-		if endIdx > len(p.tasks) {
-			endIdx = len(p.tasks)
+		// Split tasks into active (pending/running/blocked) and completed (done/failed)
+		var active, completed []*models.Task
+		for _, t := range p.tasks {
+			if t.Status == models.TaskStatusDone || t.Status == models.TaskStatusFailed {
+				completed = append(completed, t)
+			} else {
+				active = append(active, t)
+			}
 		}
 
-		for i := p.scrollOffset; i < endIdx; i++ {
-			task := p.tasks[i]
-			line := p.renderTaskLine(task, i == p.selected)
-			b.WriteString(line)
+		// Render Active section
+		b.WriteString(p.sectionStyle.Render(fmt.Sprintf(" Active (%d)", len(active))))
+		b.WriteString("\n")
+		if len(active) == 0 {
+			b.WriteString(p.normalStyle.Render("  (none)"))
+			b.WriteString("\n")
+		} else {
+			for i, task := range active {
+				line := p.renderTaskLine(task, p.isSelected(task))
+				b.WriteString(line)
+				if i < len(active)-1 {
+					b.WriteString("\n")
+				}
+			}
 			b.WriteString("\n")
 		}
 
-		// Show scroll indicators if needed
-		if p.scrollOffset > 0 {
-			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  ... more above"))
-			b.WriteString("\n")
-		}
-		if endIdx < len(p.tasks) {
-			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  ... more below"))
+		// Render Completed section
+		b.WriteString("\n")
+		b.WriteString(p.sectionStyle.Render(fmt.Sprintf(" Completed (%d)", len(completed))))
+		b.WriteString("\n")
+		if len(completed) == 0 {
+			b.WriteString(p.normalStyle.Render("  (none)"))
+		} else {
+			for i, task := range completed {
+				line := p.renderTaskLine(task, p.isSelected(task))
+				b.WriteString(line)
+				if i < len(completed)-1 {
+					b.WriteString("\n")
+				}
+			}
 		}
 	}
 
@@ -202,6 +223,14 @@ func (p *TasksPanel) View() string {
 		Width(p.width - 2). // Account for border
 		Height(p.height - 2).
 		Render(content)
+}
+
+// isSelected returns true if the given task is the currently selected one.
+func (p *TasksPanel) isSelected(task *models.Task) bool {
+	if p.selected < 0 || p.selected >= len(p.tasks) {
+		return false
+	}
+	return p.tasks[p.selected].ID == task.ID
 }
 
 // renderTaskLine renders a single task line.

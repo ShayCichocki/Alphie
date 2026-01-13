@@ -2,7 +2,7 @@
 
 Parallel Claude Code agent orchestrator. Decomposes tasks, runs them in isolated git worktrees, and merges the results.
 
-![Alphie TUI](docs/Screenshot%202026-01-12%20171956.png)
+![Alphie TUI](docs/Screenshot%202026-01-12%223016.png)
 
 ## Requirements
 

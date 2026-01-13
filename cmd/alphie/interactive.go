@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/google/uuid"
 
 	"github.com/shayc/alphie/internal/agent"
 	"github.com/shayc/alphie/internal/config"
@@ -136,21 +137,46 @@ func runInteractive() error {
 
 	// Set task submit handler (runs async to avoid blocking TUI)
 	app.SetTaskSubmitHandler(func(task string, tier models.Tier) {
+		// Generate task ID for tracking
+		taskID := uuid.New().String()[:8]
+
 		// Quick mode: single agent, no decomposition, direct execution
 		if tier == models.TierQuick {
 			atomic.AddInt32(&activeTaskCount, 1)
 			go func() {
 				defer atomic.AddInt32(&activeTaskCount, -1)
 
+				// Emit task_entered immediately for instant UI feedback
+				program.Send(tui.OrchestratorEventMsg{
+					Type:      "task_entered",
+					TaskID:    taskID,
+					TaskTitle: task,
+					Timestamp: time.Now(),
+				})
 				program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Quick: %s", task)})
 
 				result, err := quickExec.Execute(ctx, task)
 				if err != nil {
+					program.Send(tui.OrchestratorEventMsg{
+						Type:      "task_failed",
+						TaskID:    taskID,
+						TaskTitle: task,
+						Error:     err.Error(),
+						Timestamp: time.Now(),
+					})
 					program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Quick failed: %v", err)})
 					return
 				}
 
 				if !result.Success {
+					program.Send(tui.OrchestratorEventMsg{
+						Type:      "task_failed",
+						TaskID:    taskID,
+						TaskTitle: task,
+						Error:     result.Error,
+						Timestamp: time.Now(),
+						LogFile:   result.LogFile,
+					})
 					msg := fmt.Sprintf("Quick failed: %s", result.Error)
 					if result.LogFile != "" {
 						msg += fmt.Sprintf(" [log: %s]", result.LogFile)
@@ -159,6 +185,15 @@ func runInteractive() error {
 					return
 				}
 
+				program.Send(tui.OrchestratorEventMsg{
+					Type:       "task_completed",
+					TaskID:     taskID,
+					TaskTitle:  task,
+					Timestamp:  time.Now(),
+					TokensUsed: result.TokensUsed,
+					Cost:       result.Cost,
+					LogFile:    result.LogFile,
+				})
 				msg := fmt.Sprintf("Quick done! (%s, ~%d tokens, $%.4f)",
 					result.Duration.Round(100*time.Millisecond),
 					result.TokensUsed,
@@ -174,10 +209,24 @@ func runInteractive() error {
 		// Submit async to avoid blocking the TUI
 		atomic.AddInt32(&activeTaskCount, 1)
 		go func() {
+			// Emit task_entered immediately for instant UI feedback
+			program.Send(tui.OrchestratorEventMsg{
+				Type:      "task_entered",
+				TaskID:    taskID,
+				TaskTitle: task,
+				Timestamp: time.Now(),
+			})
 			program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Queuing: %s (tier: %s)", task, tier)})
 
 			_, err := pool.Submit(task, tier)
 			if err != nil {
+				program.Send(tui.OrchestratorEventMsg{
+					Type:      "task_failed",
+					TaskID:    taskID,
+					TaskTitle: task,
+					Error:     err.Error(),
+					Timestamp: time.Now(),
+				})
 				program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Failed to submit task: %v", err)})
 				atomic.AddInt32(&activeTaskCount, -1)
 				return
