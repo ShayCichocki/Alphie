@@ -50,6 +50,7 @@ type OrchestratorEventMsg struct {
 	TokensUsed int64         // For progress events
 	Cost       float64       // For progress events
 	Duration   time.Duration // For progress events
+	LogFile    string        // Path to execution log
 }
 
 // SessionDoneMsg signals that the orchestrator session has completed.
@@ -61,6 +62,13 @@ type SessionDoneMsg struct {
 // DebugLogMsg is sent to add a debug message to the logs.
 type DebugLogMsg struct {
 	Message string
+}
+
+// TaskRetryMsg is sent when the user requests to retry a failed task.
+type TaskRetryMsg struct {
+	TaskID    string
+	TaskTitle string
+	Tier      models.Tier
 }
 
 // LogEntry represents a log message displayed in the logs tab.

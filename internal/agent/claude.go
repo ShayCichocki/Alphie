@@ -78,12 +78,14 @@ func (p *ClaudeProcess) Start(prompt, worktreePath string) error {
 	}
 
 	// Build the command with required flags
+	// Use --allowedTools to allow common operations without prompting.
+	// Project's .claude/settings.json can still deny specific patterns.
 	args := []string{
 		"--output-format", "stream-json",
 		"--print",
 		"--verbose",
-		"--permission-mode", "acceptEdits",
-		prompt,
+		"--allowedTools", "Read,Write,Edit,Bash,Glob,Grep,WebFetch",
+		"-p", prompt,
 	}
 
 	p.cmd = exec.CommandContext(p.ctx, "claude", args...)

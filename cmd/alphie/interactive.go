@@ -151,14 +151,22 @@ func runInteractive() error {
 				}
 
 				if !result.Success {
-					program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Quick failed: %s", result.Error)})
+					msg := fmt.Sprintf("Quick failed: %s", result.Error)
+					if result.LogFile != "" {
+						msg += fmt.Sprintf(" [log: %s]", result.LogFile)
+					}
+					program.Send(tui.DebugLogMsg{Message: msg})
 					return
 				}
 
-				program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Quick done! (%s, ~%d tokens, $%.4f)",
+				msg := fmt.Sprintf("Quick done! (%s, ~%d tokens, $%.4f)",
 					result.Duration.Round(100*time.Millisecond),
 					result.TokensUsed,
-					result.Cost)})
+					result.Cost)
+				if result.LogFile != "" {
+					msg += fmt.Sprintf(" [log: %s]", result.LogFile)
+				}
+				program.Send(tui.DebugLogMsg{Message: msg})
 			}()
 			return
 		}
@@ -176,6 +184,23 @@ func runInteractive() error {
 			}
 
 			program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Started: %s", task)})
+		}()
+	})
+
+	// Set task retry handler
+	app.SetTaskRetryHandler(func(taskID, taskTitle string, tier models.Tier) {
+		atomic.AddInt32(&activeTaskCount, 1)
+		go func() {
+			program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Retrying: %s", taskTitle)})
+
+			_, err := pool.Submit(taskTitle, tier)
+			if err != nil {
+				program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Failed to retry task: %v", err)})
+				atomic.AddInt32(&activeTaskCount, -1)
+				return
+			}
+
+			program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Retry started: %s", taskTitle)})
 		}()
 	})
 
@@ -268,6 +293,7 @@ func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.Orchestrator
 				TokensUsed: event.TokensUsed,
 				Cost:       event.Cost,
 				Duration:   event.Duration,
+				LogFile:    event.LogFile,
 			}
 			if event.Error != nil {
 				msg.Error = event.Error.Error()

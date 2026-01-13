@@ -52,6 +52,10 @@ type Task struct {
 	CreatedAt time.Time `json:"created_at"`
 	// CompletedAt is when the task was completed, if applicable.
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	// Error contains the error message if the task failed.
+	Error string `json:"error,omitempty"`
+	// RetryCount is the number of times this task has been retried.
+	RetryCount int `json:"retry_count,omitempty"`
 }
 
 // RubricScore holds quality scores for completed work.

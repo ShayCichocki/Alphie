@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -36,16 +38,19 @@ type ExecutionResult struct {
 	// SuggestedLearnings contains potential learnings extracted from failures.
 	// These need user confirmation before being stored.
 	SuggestedLearnings []*learning.SuggestedLearning
+	// LogFile is the path to the detailed execution log.
+	LogFile string
 }
 
 // Executor wires together worktree creation, subprocess management,
 // stream parsing, token tracking, and cleanup for single-agent task execution.
 type Executor struct {
-	worktreeMgr      *WorktreeManager
-	tokenTracker     *AggregateTracker
-	agentMgr         *Manager
-	model            string
-	failureAnalyzer  *learning.FailureAnalyzer
+	worktreeMgr     *WorktreeManager
+	tokenTracker    *AggregateTracker
+	agentMgr        *Manager
+	model           string
+	failureAnalyzer *learning.FailureAnalyzer
+	taskTimeout     time.Duration
 }
 
 // ExecutorConfig contains configuration options for the Executor.
@@ -56,6 +61,9 @@ type ExecutorConfig struct {
 	RepoPath string
 	// Model is the Claude model to use for cost calculation.
 	Model string
+	// TaskTimeout is the maximum duration for a single task execution.
+	// Default is 10 minutes if not specified.
+	TaskTimeout time.Duration
 }
 
 // NewExecutor creates a new Executor with the given configuration.
@@ -70,12 +78,18 @@ func NewExecutor(cfg ExecutorConfig) (*Executor, error) {
 		model = "claude-sonnet-4-20250514"
 	}
 
+	taskTimeout := cfg.TaskTimeout
+	if taskTimeout == 0 {
+		taskTimeout = 10 * time.Minute // Default 10 minute timeout
+	}
+
 	return &Executor{
 		worktreeMgr:     worktreeMgr,
 		tokenTracker:    NewAggregateTracker(),
 		agentMgr:        NewManager(),
 		model:           model,
 		failureAnalyzer: learning.NewFailureAnalyzer(),
+		taskTimeout:     taskTimeout,
 	}, nil
 }
 
@@ -119,6 +133,17 @@ func (e *Executor) Execute(ctx context.Context, task *models.Task, tier models.T
 func (e *Executor) ExecuteWithOptions(ctx context.Context, task *models.Task, tier models.Tier, opts *ExecuteOptions) (*ExecutionResult, error) {
 	startTime := time.Now()
 	result := &ExecutionResult{}
+
+	// Apply task timeout
+	ctx, cancel := context.WithTimeout(ctx, e.taskTimeout)
+	defer cancel()
+
+	// Create log file for this task
+	logDir := filepath.Join(e.worktreeMgr.RepoPath(), ".alphie", "logs")
+	_ = os.MkdirAll(logDir, 0755)
+	logFileName := fmt.Sprintf("task-%s-%s.log", task.ID[:8], startTime.Format("150405"))
+	logFile := filepath.Join(logDir, logFileName)
+	result.LogFile = logFile
 
 	// 1. Create worktree
 	worktree, err := e.worktreeMgr.Create(task.ID)
@@ -207,15 +232,21 @@ func (e *Executor) ExecuteWithOptions(ctx context.Context, task *models.Task, ti
 	}
 
 	// 8. Determine success/failure
-	if procErr != nil {
+	if procErr != nil || ctx.Err() != nil {
 		result.Success = false
-		result.Error = procErr.Error()
-		if stderr := proc.Stderr(); stderr != "" {
-			result.Error += "; stderr: " + stderr
+		if ctx.Err() == context.DeadlineExceeded {
+			result.Error = fmt.Sprintf("task timed out after %v", e.taskTimeout)
+		} else if procErr != nil {
+			result.Error = procErr.Error()
+			if stderr := proc.Stderr(); stderr != "" {
+				result.Error += "; stderr: " + stderr
+			}
+		} else {
+			result.Error = ctx.Err().Error()
 		}
 		_ = e.agentMgr.Fail(agent.ID, result.Error)
 
-		// 8. Capture potential learnings from failure
+		// Capture potential learnings from failure
 		if e.failureAnalyzer != nil {
 			result.SuggestedLearnings = e.failureAnalyzer.AnalyzeFailure(result.Output, result.Error)
 		}
@@ -223,6 +254,25 @@ func (e *Executor) ExecuteWithOptions(ctx context.Context, task *models.Task, ti
 		result.Success = true
 		_ = e.agentMgr.Complete(agent.ID)
 	}
+
+	// Write detailed log file
+	var logContent strings.Builder
+	logContent.WriteString(fmt.Sprintf("Task: %s\n", task.Title))
+	logContent.WriteString(fmt.Sprintf("Task ID: %s\n", task.ID))
+	logContent.WriteString(fmt.Sprintf("Tier: %s\n", tier))
+	logContent.WriteString(fmt.Sprintf("Model: %s\n", result.Model))
+	logContent.WriteString(fmt.Sprintf("Started: %s\n", startTime.Format(time.RFC3339)))
+	logContent.WriteString(fmt.Sprintf("Duration: %s\n", result.Duration))
+	logContent.WriteString(fmt.Sprintf("Tokens: %d\n", result.TokensUsed))
+	logContent.WriteString(fmt.Sprintf("Cost: $%.4f\n", result.Cost))
+	logContent.WriteString(fmt.Sprintf("Success: %v\n", result.Success))
+	if result.Error != "" {
+		logContent.WriteString(fmt.Sprintf("Error: %s\n", result.Error))
+	}
+	logContent.WriteString("\n--- Output ---\n")
+	logContent.WriteString(result.Output)
+	logContent.WriteString("\n")
+	_ = os.WriteFile(logFile, []byte(logContent.String()), 0644)
 
 	return result, nil
 }

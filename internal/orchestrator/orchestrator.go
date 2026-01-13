@@ -70,6 +70,8 @@ type OrchestratorEvent struct {
 	Cost float64
 	// Duration is the elapsed time (for progress events).
 	Duration time.Duration
+	// LogFile is the path to the detailed execution log.
+	LogFile string
 }
 
 // OrchestratorConfig contains configuration options for the Orchestrator.
@@ -746,6 +748,7 @@ func (o *Orchestrator) handleTaskCompletion(ctx context.Context, taskID string, 
 			AgentID:   result.AgentID,
 			Message:   fmt.Sprintf("Completed task: %s", task.Title),
 			Timestamp: time.Now(),
+			LogFile:   result.LogFile,
 		})
 
 		// Merge agent branch (to session branch, or directly to main in greenfield mode)
@@ -798,6 +801,7 @@ func (o *Orchestrator) handleTaskCompletion(ctx context.Context, taskID string, 
 			Message:   fmt.Sprintf("Task failed: %s", task.Title),
 			Error:     fmt.Errorf("%s", result.Error),
 			Timestamp: time.Now(),
+			LogFile:   result.LogFile,
 		})
 	}
 

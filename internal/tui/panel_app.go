@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -297,6 +298,7 @@ func (a *PanelApp) handleOrchestratorEvent(msg OrchestratorEventMsg) {
 			}
 			a.tasksPanel.SetTasks(a.tasks)
 		}
+		a.updateFooterCounts()
 
 	case "task_completed":
 		// Update agent status
@@ -313,6 +315,15 @@ func (a *PanelApp) handleOrchestratorEvent(msg OrchestratorEventMsg) {
 			task.Status = models.TaskStatusDone
 			a.tasksPanel.SetTasks(a.tasks)
 		}
+		// Add log entry with log file path
+		if msg.LogFile != "" {
+			a.logsPanel.AddLog(PanelLogEntry{
+				Timestamp: msg.Timestamp,
+				Level:     LogLevelInfo,
+				Message:   fmt.Sprintf("Log: %s", msg.LogFile),
+			})
+		}
+		a.updateFooterCounts()
 
 	case "task_failed":
 		// Update agent status
@@ -328,8 +339,18 @@ func (a *PanelApp) handleOrchestratorEvent(msg OrchestratorEventMsg) {
 		if msg.TaskID != "" {
 			task := a.findOrCreateTask(msg.TaskID)
 			task.Status = models.TaskStatusFailed
+			task.Error = msg.Error // Store the error message
 			a.tasksPanel.SetTasks(a.tasks)
 		}
+		// Add log entry with log file path
+		if msg.LogFile != "" {
+			a.logsPanel.AddLog(PanelLogEntry{
+				Timestamp: msg.Timestamp,
+				Level:     LogLevelError,
+				Message:   fmt.Sprintf("Log: %s", msg.LogFile),
+			})
+		}
+		a.updateFooterCounts()
 
 	case "agent_progress":
 		// Update agent progress (tokens, cost)
@@ -380,6 +401,22 @@ func (a *PanelApp) findOrCreateTask(id string) *models.Task {
 	}
 	a.tasks = append(a.tasks, task)
 	return task
+}
+
+// updateFooterCounts updates the footer with current task counts.
+func (a *PanelApp) updateFooterCounts() {
+	counts := TaskCounts{}
+	for _, task := range a.tasks {
+		switch task.Status {
+		case models.TaskStatusDone:
+			counts.Done++
+		case models.TaskStatusFailed:
+			counts.Failed++
+		case models.TaskStatusInProgress:
+			counts.Running++
+		}
+	}
+	a.footer.SetTaskCounts(counts)
 }
 
 // FocusedPanel returns the index of the currently focused panel.

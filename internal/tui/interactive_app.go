@@ -21,6 +21,9 @@ type InteractiveApp struct {
 
 	// Callback for when a task is submitted
 	onTaskSubmit func(task string, tier models.Tier)
+
+	// Callback for when a task retry is requested
+	onTaskRetry func(taskID, taskTitle string, tier models.Tier)
 }
 
 // NewInteractiveApp creates a new InteractiveApp.
@@ -35,6 +38,11 @@ func NewInteractiveApp() *InteractiveApp {
 // SetTaskSubmitHandler sets the callback for task submissions.
 func (a *InteractiveApp) SetTaskSubmitHandler(handler func(task string, tier models.Tier)) {
 	a.onTaskSubmit = handler
+}
+
+// SetTaskRetryHandler sets the callback for task retry requests.
+func (a *InteractiveApp) SetTaskRetryHandler(handler func(taskID, taskTitle string, tier models.Tier)) {
+	a.onTaskRetry = handler
 }
 
 // Init implements tea.Model.
@@ -126,6 +134,12 @@ func (a *InteractiveApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TaskSubmittedMsg:
 		if a.onTaskSubmit != nil {
 			a.onTaskSubmit(msg.Task, msg.Tier)
+		}
+		return a, nil
+
+	case TaskRetryMsg:
+		if a.onTaskRetry != nil {
+			a.onTaskRetry(msg.TaskID, msg.TaskTitle, msg.Tier)
 		}
 		return a, nil
 

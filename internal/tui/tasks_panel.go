@@ -112,6 +112,18 @@ func (p *TasksPanel) Update(msg tea.Msg) (*TasksPanel, tea.Cmd) {
 				p.selected++
 				p.ensureVisible()
 			}
+		case "r":
+			// Retry failed task
+			task := p.SelectedTask()
+			if task != nil && task.Status == models.TaskStatusFailed {
+				return p, func() tea.Msg {
+					return TaskRetryMsg{
+						TaskID:    task.ID,
+						TaskTitle: task.Title,
+						Tier:      task.Tier,
+					}
+				}
+			}
 		}
 	}
 
@@ -207,6 +219,19 @@ func (p *TasksPanel) renderTaskLine(task *models.Task, selected bool) string {
 	}
 
 	line := fmt.Sprintf(" %s %s", icon, title)
+
+	// Add error preview for failed tasks
+	if task.Status == models.TaskStatusFailed && task.Error != "" {
+		errPreview := task.Error
+		maxErrLen := p.width - 10
+		if maxErrLen < 20 {
+			maxErrLen = 20
+		}
+		if len(errPreview) > maxErrLen {
+			errPreview = errPreview[:maxErrLen-3] + "..."
+		}
+		line += "\n     " + p.failedStyle.Render(errPreview)
+	}
 
 	if selected {
 		return p.selectedStyle.Render(line)
