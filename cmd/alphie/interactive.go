@@ -284,16 +284,17 @@ func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.Orchestrator
 			}
 
 			msg := tui.OrchestratorEventMsg{
-				Type:       string(event.Type),
-				TaskID:     event.TaskID,
-				TaskTitle:  event.TaskTitle,
-				AgentID:    event.AgentID,
-				Message:    event.Message,
-				Timestamp:  event.Timestamp,
-				TokensUsed: event.TokensUsed,
-				Cost:       event.Cost,
-				Duration:   event.Duration,
-				LogFile:    event.LogFile,
+				Type:          string(event.Type),
+				TaskID:        event.TaskID,
+				TaskTitle:     event.TaskTitle,
+				AgentID:       event.AgentID,
+				Message:       event.Message,
+				Timestamp:     event.Timestamp,
+				TokensUsed:    event.TokensUsed,
+				Cost:          event.Cost,
+				Duration:      event.Duration,
+				LogFile:       event.LogFile,
+				CurrentAction: event.CurrentAction,
 			}
 			if event.Error != nil {
 				msg.Error = event.Error.Error()

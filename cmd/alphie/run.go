@@ -472,16 +472,18 @@ func forwardEventsToTUI(program *tea.Program, events <-chan orchestrator.Orchest
 			errStr = event.Error.Error()
 		}
 		msg := tui.OrchestratorEventMsg{
-			Type:       string(event.Type),
-			TaskID:     event.TaskID,
-			TaskTitle:  event.TaskTitle,
-			AgentID:    event.AgentID,
-			Message:    event.Message,
-			Error:      errStr,
-			Timestamp:  event.Timestamp,
-			TokensUsed: event.TokensUsed,
-			Cost:       event.Cost,
-			Duration:   event.Duration,
+			Type:          string(event.Type),
+			TaskID:        event.TaskID,
+			TaskTitle:     event.TaskTitle,
+			AgentID:       event.AgentID,
+			Message:       event.Message,
+			Error:         errStr,
+			Timestamp:     event.Timestamp,
+			TokensUsed:    event.TokensUsed,
+			Cost:          event.Cost,
+			Duration:      event.Duration,
+			LogFile:       event.LogFile,
+			CurrentAction: event.CurrentAction,
 		}
 		program.Send(msg)
 	}

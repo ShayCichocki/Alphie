@@ -103,6 +103,8 @@ type ProgressUpdate struct {
 	Cost float64
 	// Duration is time elapsed since execution started.
 	Duration time.Duration
+	// CurrentAction describes what the agent is doing right now (e.g., "Reading auth.go").
+	CurrentAction string
 }
 
 // ProgressCallback is called periodically during task execution with progress updates.
@@ -190,19 +192,26 @@ func (e *Executor) ExecuteWithOptions(ctx context.Context, task *models.Task, ti
 
 	// 5. Stream and parse output, track tokens
 	var outputBuilder strings.Builder
+	var currentAction string
 	lastProgressUpdate := time.Now()
 	progressInterval := 2 * time.Second // Send progress updates every 2 seconds
 	for event := range proc.Output() {
 		e.processStreamEvent(event, tracker, &outputBuilder)
 
+		// Track current tool action
+		if event.ToolAction != "" {
+			currentAction = event.ToolAction
+		}
+
 		// Send periodic progress updates
 		if opts != nil && opts.OnProgress != nil && time.Since(lastProgressUpdate) >= progressInterval {
 			usage := tracker.GetUsage()
 			opts.OnProgress(ProgressUpdate{
-				AgentID:    agent.ID,
-				TokensUsed: usage.TotalTokens,
-				Cost:       tracker.GetCost(),
-				Duration:   time.Since(startTime),
+				AgentID:       agent.ID,
+				TokensUsed:    usage.TotalTokens,
+				Cost:          tracker.GetCost(),
+				Duration:      time.Since(startTime),
+				CurrentAction: currentAction,
 			})
 			lastProgressUpdate = time.Now()
 		}

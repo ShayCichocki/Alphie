@@ -19,6 +19,7 @@ type Footer struct {
 	success      bool
 	sessionDone  bool
 	focusedPanel int
+	activeTab    int
 	width        int
 	taskCounts   TaskCounts
 
@@ -78,6 +79,11 @@ func (f *Footer) SetTaskCounts(counts TaskCounts) {
 	f.taskCounts = counts
 }
 
+// SetActiveTab sets which tab is currently active.
+func (f *Footer) SetActiveTab(tab int) {
+	f.activeTab = tab
+}
+
 // View renders the footer.
 func (f *Footer) View() string {
 	var left string
@@ -126,17 +132,20 @@ func (f *Footer) keyboardHints() string {
 		return f.hintStyle.Render("Press q to exit")
 	}
 
-	// Base hints
-	hints := "←/→ panels"
+	// Base hints - always show tab switching
+	hints := "1:Main 2:Logs"
 
-	// Panel-specific hints
-	switch f.focusedPanel {
-	case 0: // Tasks panel
-		hints += " │ ↑/↓ scroll │ r retry"
-	case 1: // Agents panel
-		hints += " │ ↑/↓/←/→ nav"
-	case 2: // Logs panel
+	if f.activeTab == 1 { // TabLogs
+		// Logs tab hints
 		hints += " │ ↑/↓ scroll │ f filter │ a auto-scroll"
+	} else {
+		// Main tab hints based on focused panel
+		switch f.focusedPanel {
+		case 0: // Tasks panel
+			hints += " │ ↑/↓ scroll │ r retry │ tab switch"
+		case 1: // Agents panel
+			hints += " │ ↑/↓/←/→ nav │ tab switch"
+		}
 	}
 
 	hints += " │ q quit"

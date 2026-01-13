@@ -40,17 +40,18 @@ type KeyMsg struct {
 
 // OrchestratorEventMsg wraps an orchestrator event for the TUI.
 type OrchestratorEventMsg struct {
-	Type       string
-	TaskID     string
-	TaskTitle  string
-	AgentID    string
-	Message    string
-	Error      string
-	Timestamp  time.Time
-	TokensUsed int64         // For progress events
-	Cost       float64       // For progress events
-	Duration   time.Duration // For progress events
-	LogFile    string        // Path to execution log
+	Type          string
+	TaskID        string
+	TaskTitle     string
+	AgentID       string
+	Message       string
+	Error         string
+	Timestamp     time.Time
+	TokensUsed    int64         // For progress events
+	Cost          float64       // For progress events
+	Duration      time.Duration // For progress events
+	LogFile       string        // Path to execution log
+	CurrentAction string        // What the agent is currently doing (e.g., "Reading auth.go")
 }
 
 // SessionDoneMsg signals that the orchestrator session has completed.

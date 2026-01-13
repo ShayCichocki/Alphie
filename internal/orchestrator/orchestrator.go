@@ -73,6 +73,8 @@ type OrchestratorEvent struct {
 	Duration time.Duration
 	// LogFile is the path to the detailed execution log.
 	LogFile string
+	// CurrentAction describes what the agent is doing right now (e.g., "Reading auth.go").
+	CurrentAction string
 }
 
 // OrchestratorConfig contains configuration options for the Orchestrator.
@@ -674,14 +676,15 @@ func (o *Orchestrator) runLoop(ctx context.Context) error {
 						Learnings: learnings,
 						OnProgress: func(update agent.ProgressUpdate) {
 							o.emitEvent(OrchestratorEvent{
-								Type:       EventAgentProgress,
-								TaskID:     t.ID,
-								AgentID:    update.AgentID,
-								Message:    fmt.Sprintf("Agent progress: %d tokens, $%.4f", update.TokensUsed, update.Cost),
-								Timestamp:  time.Now(),
-								TokensUsed: update.TokensUsed,
-								Cost:       update.Cost,
-								Duration:   update.Duration,
+								Type:          EventAgentProgress,
+								TaskID:        t.ID,
+								AgentID:       update.AgentID,
+								Message:       fmt.Sprintf("Agent progress: %d tokens, $%.4f", update.TokensUsed, update.Cost),
+								Timestamp:     time.Now(),
+								TokensUsed:    update.TokensUsed,
+								Cost:          update.Cost,
+								Duration:      update.Duration,
+								CurrentAction: update.CurrentAction,
 							})
 						},
 					}

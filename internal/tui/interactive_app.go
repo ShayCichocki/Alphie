@@ -61,42 +61,64 @@ func (a *InteractiveApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.quitting = true
 			return a, tea.Quit
 
+		case "1", "2":
+			// Tab switching - always forward to panel app
+			var cmd tea.Cmd
+			_, cmd = a.panelApp.Update(msg)
+			// If switching to logs tab, blur input
+			if msg.String() == "2" {
+				a.inputFocused = false
+				a.inputField.Blur()
+			}
+			// If switching to main tab and no panel is focused, focus input
+			if msg.String() == "1" && a.panelApp.ActiveTab() == ViewTabLogs {
+				a.inputFocused = true
+				return a, a.inputField.Focus()
+			}
+			return a, cmd
+
 		case "tab":
-			// Cycle focus: input -> Tasks -> Agents -> Logs -> input
+			// On logs tab, tab does nothing (logs handles all navigation)
+			if a.panelApp.ActiveTab() == ViewTabLogs {
+				return a, nil
+			}
+			// Cycle focus on main tab: input -> Tasks -> Agents -> input
 			if a.inputFocused {
 				// Move focus from input to first panel (Tasks)
 				a.inputFocused = false
 				a.inputField.Blur()
 				a.panelApp.SetFocusedPanel(PanelTasks)
 				return a, nil
-			} else if a.panelApp.FocusedPanel() == PanelLogs {
-				// At last panel, cycle back to input
+			} else if a.panelApp.FocusedPanel() == PanelAgents {
+				// At Agents panel, cycle back to input
 				a.inputFocused = true
 				return a, a.inputField.Focus()
 			} else {
-				// Cycle to next panel
-				var cmd tea.Cmd
-				_, cmd = a.panelApp.Update(msg)
-				return a, cmd
+				// Tasks -> Agents
+				a.panelApp.SetFocusedPanel(PanelAgents)
+				return a, nil
 			}
 
 		case "shift+tab":
-			// Reverse cycle: input -> Logs -> Agents -> Tasks -> input
+			// On logs tab, shift+tab does nothing
+			if a.panelApp.ActiveTab() == ViewTabLogs {
+				return a, nil
+			}
+			// Reverse cycle on main tab: input -> Agents -> Tasks -> input
 			if a.inputFocused {
-				// Move focus from input to last panel (Logs)
+				// Move focus from input to last panel on main tab (Agents)
 				a.inputFocused = false
 				a.inputField.Blur()
-				a.panelApp.SetFocusedPanel(PanelLogs)
+				a.panelApp.SetFocusedPanel(PanelAgents)
 				return a, nil
 			} else if a.panelApp.FocusedPanel() == PanelTasks {
-				// At first panel, cycle back to input
+				// At Tasks panel, cycle back to input
 				a.inputFocused = true
 				return a, a.inputField.Focus()
 			} else {
-				// Cycle to previous panel
-				var cmd tea.Cmd
-				_, cmd = a.panelApp.Update(msg)
-				return a, cmd
+				// Agents -> Tasks
+				a.panelApp.SetFocusedPanel(PanelTasks)
+				return a, nil
 			}
 
 		case "escape":
@@ -156,9 +178,15 @@ func (a *InteractiveApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateSizes updates the sizes of child components based on terminal size.
 func (a *InteractiveApp) updateSizes() {
-	// Input field takes 3 lines (border + content)
-	inputHeight := 3
-	panelHeight := a.height - inputHeight - 1 // -1 for spacing
+	var panelHeight int
+
+	// Input field takes 3 lines (border + content) - only on main tab
+	if a.panelApp.ActiveTab() == ViewTabLogs {
+		panelHeight = a.height
+	} else {
+		inputHeight := 3
+		panelHeight = a.height - inputHeight - 1 // -1 for spacing
+	}
 
 	// Update panel app with adjusted height
 	a.panelApp.width = a.width
@@ -177,8 +205,13 @@ func (a *InteractiveApp) View() string {
 	}
 
 	panels := a.panelApp.View()
-	input := a.inputField.View()
 
+	// Hide input field on Logs tab
+	if a.panelApp.ActiveTab() == ViewTabLogs {
+		return panels
+	}
+
+	input := a.inputField.View()
 	return lipgloss.JoinVertical(lipgloss.Left, panels, input)
 }
 

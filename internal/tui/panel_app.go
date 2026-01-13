@@ -16,6 +16,15 @@ const (
 	PanelLogs   = 2
 )
 
+// View tab indices (for 2-tab layout: Main vs Logs).
+const (
+	ViewTabMain = 0 // Tasks + Agents combined
+	ViewTabLogs = 1 // Full-screen logs
+)
+
+// tabBarHeight is the height of the tab indicator bar.
+const tabBarHeight = 1
+
 // PanelApp is the main bubbletea model for the panel-based TUI.
 type PanelApp struct {
 	// Panels
@@ -29,6 +38,7 @@ type PanelApp struct {
 	layout *LayoutManager
 
 	// State
+	activeTab      int // 0 = main (tasks+agents), 1 = logs
 	focusedPanel   int
 	width          int
 	height         int
@@ -87,38 +97,80 @@ func (a *PanelApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.quitting = true
 			return a, tea.Quit
 
+		case "1":
+			// Switch to main tab
+			if a.activeTab != ViewTabMain {
+				a.activeTab = ViewTabMain
+				a.focusedPanel = PanelAgents
+				a.updatePanelFocus()
+				a.updatePanelSizes()
+				a.footer.SetActiveTab(ViewTabMain)
+			}
+		case "2":
+			// Switch to logs tab
+			if a.activeTab != ViewTabLogs {
+				a.activeTab = ViewTabLogs
+				a.focusedPanel = PanelLogs
+				a.updatePanelFocus()
+				a.updatePanelSizes()
+				a.footer.SetActiveTab(ViewTabLogs)
+			}
+
 		case "left", "h":
-			if !a.panelHandlesKey(msg.String()) {
-				a.focusedPanel = (a.focusedPanel - 1 + 3) % 3
+			if a.activeTab == ViewTabMain && !a.panelHandlesKey(msg.String()) {
+				// On main tab, cycle between Tasks and Agents
+				if a.focusedPanel == PanelAgents {
+					a.focusedPanel = PanelTasks
+				}
 				a.updatePanelFocus()
 			}
 		case "right", "l":
-			if !a.panelHandlesKey(msg.String()) {
-				a.focusedPanel = (a.focusedPanel + 1) % 3
+			if a.activeTab == ViewTabMain && !a.panelHandlesKey(msg.String()) {
+				// On main tab, cycle between Tasks and Agents
+				if a.focusedPanel == PanelTasks {
+					a.focusedPanel = PanelAgents
+				}
 				a.updatePanelFocus()
 			}
 		case "tab":
-			a.focusedPanel = (a.focusedPanel + 1) % 3
-			a.updatePanelFocus()
+			if a.activeTab == ViewTabMain {
+				// Cycle between Tasks and Agents on main tab
+				if a.focusedPanel == PanelTasks {
+					a.focusedPanel = PanelAgents
+				} else {
+					a.focusedPanel = PanelTasks
+				}
+				a.updatePanelFocus()
+			}
+			// On logs tab, tab key does nothing (logs panel handles all input)
 		case "shift+tab":
-			a.focusedPanel = (a.focusedPanel - 1 + 3) % 3
-			a.updatePanelFocus()
+			if a.activeTab == ViewTabMain {
+				// Cycle between Tasks and Agents on main tab
+				if a.focusedPanel == PanelAgents {
+					a.focusedPanel = PanelTasks
+				} else {
+					a.focusedPanel = PanelAgents
+				}
+				a.updatePanelFocus()
+			}
 		}
 
-		// Forward to focused panel
-		switch a.focusedPanel {
-		case PanelTasks:
-			var cmd tea.Cmd
-			a.tasksPanel, cmd = a.tasksPanel.Update(msg)
-			cmds = append(cmds, cmd)
-		case PanelAgents:
-			var cmd tea.Cmd
-			a.agentsPanel, cmd = a.agentsPanel.Update(msg)
-			cmds = append(cmds, cmd)
-		case PanelLogs:
+		// Forward to focused panel based on active tab
+		if a.activeTab == ViewTabLogs {
 			var cmd tea.Cmd
 			a.logsPanel, cmd = a.logsPanel.Update(msg)
 			cmds = append(cmds, cmd)
+		} else {
+			switch a.focusedPanel {
+			case PanelTasks:
+				var cmd tea.Cmd
+				a.tasksPanel, cmd = a.tasksPanel.Update(msg)
+				cmds = append(cmds, cmd)
+			case PanelAgents:
+				var cmd tea.Cmd
+				a.agentsPanel, cmd = a.agentsPanel.Update(msg)
+				cmds = append(cmds, cmd)
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -155,7 +207,11 @@ func (a *PanelApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // panelHandlesKey returns true if the focused panel uses left/right for its own navigation.
 func (a *PanelApp) panelHandlesKey(key string) bool {
-	// Agents panel uses left/right for card navigation
+	// On logs tab, logs panel handles all navigation
+	if a.activeTab == ViewTabLogs {
+		return true
+	}
+	// On main tab, agents panel uses left/right for card navigation
 	if a.focusedPanel == PanelAgents && (key == "left" || key == "right" || key == "h" || key == "l") {
 		return true
 	}
@@ -170,14 +226,20 @@ func (a *PanelApp) updatePanelFocus() {
 	a.footer.SetFocusedPanel(a.focusedPanel)
 }
 
-// updatePanelSizes updates panel dimensions based on layout.
+// updatePanelSizes updates panel dimensions based on layout and active tab.
 func (a *PanelApp) updatePanelSizes() {
-	dims := a.layout.Calculate()
 	a.header.SetWidth(a.width)
-	a.tasksPanel.SetSize(dims.TasksWidth, dims.ContentHeight)
-	a.agentsPanel.SetSize(dims.AgentsWidth, dims.ContentHeight)
-	a.logsPanel.SetSize(dims.LogsWidth, dims.ContentHeight)
 	a.footer.SetWidth(a.width)
+
+	// Calculate dimensions based on active tab
+	if a.activeTab == ViewTabLogs {
+		dims := a.layout.CalculateLogsTab(tabBarHeight)
+		a.logsPanel.SetSize(dims.LogsWidth, dims.ContentHeight)
+	} else {
+		dims := a.layout.CalculateMainTab(tabBarHeight)
+		a.tasksPanel.SetSize(dims.TasksWidth, dims.ContentHeight)
+		a.agentsPanel.SetSize(dims.AgentsWidth, dims.ContentHeight)
+	}
 }
 
 // View implements tea.Model.
@@ -186,31 +248,54 @@ func (a *PanelApp) View() string {
 		return "Goodbye!\n"
 	}
 
-	// Get panel dimensions
-	dims := a.layout.Calculate()
+	var content string
 
-	// Render panels
-	tasksView := a.tasksPanel.View()
-	agentsView := a.agentsPanel.View()
-	logsView := a.logsPanel.View()
+	if a.activeTab == ViewTabLogs {
+		// Tab 2: Full-screen logs (panel handles its own sizing via SetSize)
+		content = a.logsPanel.View()
+	} else {
+		// Tab 1: Tasks + Agents side-by-side
+		dims := a.layout.CalculateMainTab(tabBarHeight)
+		tasksView := lipgloss.NewStyle().
+			Width(dims.TasksWidth).
+			Height(dims.ContentHeight).
+			Render(a.tasksPanel.View())
+		agentsView := lipgloss.NewStyle().
+			Width(dims.AgentsWidth).
+			Height(dims.ContentHeight).
+			Render(a.agentsPanel.View())
+		content = lipgloss.JoinHorizontal(lipgloss.Top, tasksView, agentsView)
+	}
 
-	// Adjust panel sizes to match calculated dimensions
-	tasksView = lipgloss.NewStyle().Width(dims.TasksWidth).Height(dims.ContentHeight).Render(tasksView)
-	agentsView = lipgloss.NewStyle().Width(dims.AgentsWidth).Height(dims.ContentHeight).Render(agentsView)
-	logsView = lipgloss.NewStyle().Width(dims.LogsWidth).Height(dims.ContentHeight).Render(logsView)
-
-	// Join panels horizontally
-	panels := lipgloss.JoinHorizontal(lipgloss.Top, tasksView, agentsView, logsView)
-
-	// Add footer
+	// Tab indicator bar
+	tabIndicator := a.renderTabIndicator()
 	footer := a.footer.View()
 
 	// Combine all parts
 	if a.showHeader {
 		header := a.header.View()
-		return header + "\n" + panels + "\n" + footer
+		return header + "\n" + tabIndicator + content + "\n" + footer
 	}
-	return panels + "\n" + footer
+	return tabIndicator + content + "\n" + footer
+}
+
+// renderTabIndicator renders the tab bar showing active tab.
+func (a *PanelApp) renderTabIndicator() string {
+	activeStyle := lipgloss.NewStyle().Bold(true).Reverse(true)
+	inactiveStyle := lipgloss.NewStyle().Faint(true)
+
+	tab1 := " 1:Main "
+	tab2 := " 2:Logs "
+
+	if a.activeTab == ViewTabMain {
+		tab1 = activeStyle.Render(tab1)
+		tab2 = inactiveStyle.Render(tab2)
+	} else {
+		tab1 = inactiveStyle.Render(tab1)
+		tab2 = activeStyle.Render(tab2)
+	}
+
+	return tab1 + tab2 + "\n"
 }
 
 // updateAgent adds or updates an agent.
@@ -284,6 +369,7 @@ func (a *PanelApp) handleOrchestratorEvent(msg OrchestratorEventMsg) {
 		if msg.AgentID != "" {
 			agent := a.findOrCreateAgent(msg.AgentID)
 			agent.TaskID = msg.TaskID
+			agent.TaskTitle = msg.TaskTitle
 			agent.Status = models.AgentStatusRunning
 			agent.StartedAt = msg.Timestamp
 			a.agentsPanel.SetAgents(a.agents)
@@ -305,6 +391,8 @@ func (a *PanelApp) handleOrchestratorEvent(msg OrchestratorEventMsg) {
 		if msg.AgentID != "" {
 			agent := a.findOrCreateAgent(msg.AgentID)
 			agent.Status = models.AgentStatusDone
+			agent.CompletedAt = time.Now()
+			agent.CurrentAction = ""
 			a.agentsPanel.SetAgents(a.agents)
 			// Clear live progress for this agent
 			a.logsPanel.ClearProgress(msg.AgentID)
@@ -331,6 +419,8 @@ func (a *PanelApp) handleOrchestratorEvent(msg OrchestratorEventMsg) {
 			agent := a.findOrCreateAgent(msg.AgentID)
 			agent.Status = models.AgentStatusFailed
 			agent.Error = msg.Error // Store the error message
+			agent.CompletedAt = time.Now()
+			agent.CurrentAction = ""
 			a.agentsPanel.SetAgents(a.agents)
 			// Clear live progress for this agent
 			a.logsPanel.ClearProgress(msg.AgentID)
@@ -353,11 +443,14 @@ func (a *PanelApp) handleOrchestratorEvent(msg OrchestratorEventMsg) {
 		a.updateFooterCounts()
 
 	case "agent_progress":
-		// Update agent progress (tokens, cost)
+		// Update agent progress (tokens, cost, current action)
 		if msg.AgentID != "" {
 			agent := a.findOrCreateAgent(msg.AgentID)
 			agent.TokensUsed = msg.TokensUsed
 			agent.Cost = msg.Cost
+			if msg.CurrentAction != "" {
+				agent.CurrentAction = msg.CurrentAction
+			}
 			a.agentsPanel.SetAgents(a.agents)
 		}
 
@@ -428,6 +521,11 @@ func (a *PanelApp) FocusedPanel() int {
 func (a *PanelApp) SetFocusedPanel(panel int) {
 	a.focusedPanel = panel
 	a.updatePanelFocus()
+}
+
+// ActiveTab returns the currently active tab index.
+func (a *PanelApp) ActiveTab() int {
+	return a.activeTab
 }
 
 // NewPanelProgram creates a new Bubbletea program for the panel-based TUI.

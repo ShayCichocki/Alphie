@@ -35,6 +35,8 @@ type StreamEvent struct {
 	Message string `json:"message,omitempty"`
 	// Error contains error details when Type is StreamEventError.
 	Error string `json:"error,omitempty"`
+	// ToolAction describes the current tool being used (e.g., "Reading auth.go").
+	ToolAction string `json:"tool_action,omitempty"`
 	// Raw contains the original JSON for debugging.
 	Raw json.RawMessage `json:"-"`
 }
@@ -199,6 +201,10 @@ func parseStreamEvent(data []byte) (StreamEvent, error) {
 		} else if content, ok := raw["content"].(string); ok {
 			event.Message = content
 		}
+		// Check for tool use in assistant messages
+		if event.Type == StreamEventAssistant {
+			event.ToolAction = extractToolAction(raw)
+		}
 	case StreamEventResult:
 		if result, ok := raw["result"].(string); ok {
 			event.Message = result
@@ -214,6 +220,130 @@ func parseStreamEvent(data []byte) (StreamEvent, error) {
 	}
 
 	return event, nil
+}
+
+// extractToolAction extracts a human-readable tool action from an event.
+// Returns empty string if no tool use is detected.
+func extractToolAction(raw map[string]interface{}) string {
+	// Claude Code emits tool_use in various formats. Check common patterns.
+
+	// Pattern 1: message.content is an array with tool_use objects
+	if msg, ok := raw["message"].(map[string]interface{}); ok {
+		if content, ok := msg["content"].([]interface{}); ok {
+			for _, item := range content {
+				if block, ok := item.(map[string]interface{}); ok {
+					if blockType, _ := block["type"].(string); blockType == "tool_use" {
+						return formatToolAction(block)
+					}
+				}
+			}
+		}
+	}
+
+	// Pattern 2: content is an array at top level
+	if content, ok := raw["content"].([]interface{}); ok {
+		for _, item := range content {
+			if block, ok := item.(map[string]interface{}); ok {
+				if blockType, _ := block["type"].(string); blockType == "tool_use" {
+					return formatToolAction(block)
+				}
+			}
+		}
+	}
+
+	// Pattern 3: direct tool_use field
+	if toolUse, ok := raw["tool_use"].(map[string]interface{}); ok {
+		return formatToolAction(toolUse)
+	}
+
+	return ""
+}
+
+// formatToolAction formats a tool_use block into a human-readable string.
+func formatToolAction(block map[string]interface{}) string {
+	name, _ := block["name"].(string)
+	if name == "" {
+		return ""
+	}
+
+	input, _ := block["input"].(map[string]interface{})
+
+	switch name {
+	case "Read":
+		if path, ok := input["file_path"].(string); ok {
+			return "Reading " + truncateFilename(path)
+		}
+		return "Reading file"
+	case "Edit":
+		if path, ok := input["file_path"].(string); ok {
+			return "Editing " + truncateFilename(path)
+		}
+		return "Editing file"
+	case "Write":
+		if path, ok := input["file_path"].(string); ok {
+			return "Writing " + truncateFilename(path)
+		}
+		return "Writing file"
+	case "Bash":
+		if cmd, ok := input["command"].(string); ok {
+			return "Running " + truncateCommand(cmd)
+		}
+		return "Running command"
+	case "Glob":
+		if pattern, ok := input["pattern"].(string); ok {
+			return "Searching " + pattern
+		}
+		return "Searching files"
+	case "Grep":
+		if pattern, ok := input["pattern"].(string); ok {
+			return "Grep " + truncatePattern(pattern)
+		}
+		return "Searching code"
+	case "WebFetch":
+		return "Fetching URL"
+	case "Task":
+		return "Running subagent"
+	default:
+		return name
+	}
+}
+
+// truncateFilename extracts just the filename from a path and truncates if needed.
+func truncateFilename(path string) string {
+	// Extract just the filename
+	for i := len(path) - 1; i >= 0; i-- {
+		if path[i] == '/' {
+			path = path[i+1:]
+			break
+		}
+	}
+	if len(path) > 20 {
+		return path[:17] + "..."
+	}
+	return path
+}
+
+// truncateCommand truncates a command for display.
+func truncateCommand(cmd string) string {
+	// Take first word or truncate
+	for i, c := range cmd {
+		if c == ' ' || c == '\n' {
+			cmd = cmd[:i]
+			break
+		}
+	}
+	if len(cmd) > 20 {
+		return cmd[:17] + "..."
+	}
+	return cmd
+}
+
+// truncatePattern truncates a search pattern for display.
+func truncatePattern(pattern string) string {
+	if len(pattern) > 15 {
+		return pattern[:12] + "..."
+	}
+	return pattern
 }
 
 // Output returns a channel that receives stream events from the process.

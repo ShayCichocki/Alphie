@@ -2,10 +2,16 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/shayc/alphie/pkg/models"
+)
+
+const (
+	// agentAutoHideDelay is how long completed agents remain visible.
+	agentAutoHideDelay = 30 * time.Second
 )
 
 // AgentsPanel displays a grid of agent cards.
@@ -49,18 +55,27 @@ func NewAgentsPanel() *AgentsPanel {
 	}
 }
 
-// SetAgents updates the list of agents.
+// SetAgents updates the list of agents with auto-hide filtering.
 func (p *AgentsPanel) SetAgents(agents []*models.Agent) {
+	cutoff := time.Now().Add(-agentAutoHideDelay)
 	p.agents = make([]*AgentCardData, 0, len(agents))
 	for _, agent := range agents {
+		// Auto-hide: filter out completed (done) agents after 30 seconds.
+		// Keep failed agents visible so users can investigate.
+		if agent.Status == models.AgentStatusDone && !agent.CompletedAt.IsZero() && agent.CompletedAt.Before(cutoff) {
+			continue
+		}
 		p.agents = append(p.agents, &AgentCardData{
-			ID:         agent.ID,
-			Status:     agent.Status,
-			Error:      agent.Error,
-			TaskID:     agent.TaskID,
-			TokensUsed: agent.TokensUsed,
-			Cost:       agent.Cost,
-			StartedAt:  agent.StartedAt,
+			ID:            agent.ID,
+			Status:        agent.Status,
+			Error:         agent.Error,
+			TaskID:        agent.TaskID,
+			TaskTitle:     agent.TaskTitle,
+			TokensUsed:    agent.TokensUsed,
+			Cost:          agent.Cost,
+			StartedAt:     agent.StartedAt,
+			CurrentAction: agent.CurrentAction,
+			CompletedAt:   agent.CompletedAt,
 		})
 	}
 	// Ensure selected index is valid

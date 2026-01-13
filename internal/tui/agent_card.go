@@ -27,6 +27,10 @@ type AgentCardData struct {
 	Cost float64
 	// StartedAt is when the agent started.
 	StartedAt time.Time
+	// CurrentAction describes what the agent is doing right now.
+	CurrentAction string
+	// CompletedAt is when the agent finished (for auto-hide logic).
+	CompletedAt time.Time
 }
 
 // AgentCard renders a single agent as a card.
@@ -103,58 +107,33 @@ func (c *AgentCard) View() string {
 	}
 
 	var b strings.Builder
+	contentWidth := c.width - 6 // Account for border and padding
 
-	// Agent ID (truncated)
-	agentID := c.data.ID
-	if len(agentID) > 8 {
-		agentID = agentID[:8]
+	// Line 1: Task title (primary identifier)
+	title := c.data.TaskTitle
+	if title == "" {
+		title = c.data.TaskID
 	}
-	b.WriteString(c.idStyle.Render(agentID))
+	if len(title) > contentWidth {
+		title = title[:contentWidth-3] + "..."
+	}
+	b.WriteString(c.idStyle.Render(title))
 	b.WriteString("\n")
 
-	// Status with icon
-	statusStr := c.renderStatus()
-	b.WriteString(statusStr)
+	// Line 2: Status with action or final state
+	b.WriteString(c.renderStatusLine(contentWidth))
 	b.WriteString("\n")
 
-	// Show error reason if failed, otherwise show task info
-	if c.data.Status == models.AgentStatusFailed && c.data.Error != "" {
-		// Error message (truncated to fit)
-		errMsg := c.data.Error
-		maxLen := c.width - 6
-		if len(errMsg) > maxLen {
-			errMsg = errMsg[:maxLen-3] + "..."
-		}
-		b.WriteString(c.statusFailed.Render(errMsg))
-		b.WriteString("\n")
-	} else {
-		// Task ID (truncated)
-		taskID := c.data.TaskID
-		if len(taskID) > c.width-6 {
-			taskID = taskID[:c.width-9] + "..."
-		}
-		b.WriteString(c.labelStyle.Render("Task: "))
-		b.WriteString(c.valueStyle.Render(taskID))
-		b.WriteString("\n")
-	}
-
-	// Tokens
+	// Line 3: Tokens + Cost (combined)
 	tokensStr := formatTokensCompact(c.data.TokensUsed)
-	b.WriteString(c.labelStyle.Render("Tok: "))
-	b.WriteString(c.valueStyle.Render(tokensStr))
+	costStr := fmt.Sprintf("$%.2f", c.data.Cost)
+	b.WriteString(c.valueStyle.Render(tokensStr + " tokens  " + costStr))
 	b.WriteString("\n")
 
-	// Cost
-	costStr := fmt.Sprintf("$%.4f", c.data.Cost)
-	b.WriteString(c.labelStyle.Render("Cost: "))
-	b.WriteString(c.valueStyle.Render(costStr))
-	b.WriteString("\n")
-
-	// Duration
+	// Line 4: Duration
 	duration := time.Since(c.data.StartedAt)
 	durationStr := formatDuration(duration)
-	b.WriteString(c.labelStyle.Render("Time: "))
-	b.WriteString(c.valueStyle.Render(durationStr))
+	b.WriteString(c.labelStyle.Render(durationStr))
 
 	// Apply border and size
 	return c.borderStyle.
@@ -163,44 +142,58 @@ func (c *AgentCard) View() string {
 		Render(b.String())
 }
 
-// renderStatus renders the status line with icon.
-func (c *AgentCard) renderStatus() string {
+// renderStatusLine renders the status line with icon and context-aware detail.
+func (c *AgentCard) renderStatusLine(maxWidth int) string {
 	var icon string
 	var style lipgloss.Style
-	var statusText string
+	var detail string
 
 	switch c.data.Status {
 	case models.AgentStatusRunning:
 		icon = iconRunning
 		style = c.statusRunning
-		statusText = "Running"
+		if c.data.CurrentAction != "" {
+			detail = c.data.CurrentAction
+		} else {
+			detail = "Working..."
+		}
 	case models.AgentStatusDone:
 		icon = iconDone
 		style = c.statusDone
-		statusText = "Done"
+		detail = "Done"
 	case models.AgentStatusFailed:
 		icon = iconFailed
 		style = c.statusFailed
-		statusText = "Failed"
+		if c.data.Error != "" {
+			detail = c.data.Error
+		} else {
+			detail = "Failed"
+		}
 	case models.AgentStatusPaused:
 		icon = iconPaused
 		style = c.statusPaused
-		statusText = "Paused"
+		detail = "Paused"
 	case models.AgentStatusPending:
 		icon = iconPending
 		style = c.statusPending
-		statusText = "Pending"
+		detail = "Pending"
 	case models.AgentStatusWaitingApproval:
 		icon = iconQuestion
 		style = c.statusPaused
-		statusText = "Waiting"
+		detail = "Awaiting approval"
 	default:
 		icon = iconPending
 		style = c.statusPending
-		statusText = "Unknown"
+		detail = "Unknown"
 	}
 
-	return style.Render(icon + " " + statusText)
+	// Truncate detail to fit width (accounting for icon + space)
+	iconLen := 2 // icon + space
+	if len(detail) > maxWidth-iconLen {
+		detail = detail[:maxWidth-iconLen-3] + "..."
+	}
+
+	return style.Render(icon + " " + detail)
 }
 
 // formatTokensCompact formats tokens in a compact way (e.g., 1.2k, 15k, 1.5M).
