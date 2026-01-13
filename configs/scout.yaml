@@ -1,0 +1,22 @@
+# Scout Tier Configuration
+# Fast exploration and simple fixes
+
+tier: scout
+max_agents: 2
+primary_model: haiku
+quality_threshold: 5
+max_ralph_iterations: 3
+questions_allowed: 0  # Override gates: blocked_after_n OR protected_area
+
+# Scout-specific settings
+timeout: 5m
+
+# Override gates that allow Scout to ask questions
+override_gates:
+  blocked_after_n_attempts: 5
+  protected_area_detected: true
+
+# Model selection
+models:
+  default: haiku
+  fallback: null

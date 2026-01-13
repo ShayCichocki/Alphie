@@ -1,0 +1,16 @@
+# Binaries
+/alphie
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+.worktrees/
+
+# Local state
+.alphie/*.db
+.claude/

@@ -1,0 +1,26 @@
+# Builder Tier Configuration
+# Standard feature work with balanced capability
+
+tier: builder
+max_agents: 3
+primary_model: sonnet
+quality_threshold: 7
+max_ralph_iterations: 5
+questions_allowed: 2
+
+# Builder-specific settings
+timeout: 15m
+
+# Model selection
+models:
+  default: sonnet
+  fallback: haiku
+
+# Review settings
+review:
+  sampled_second_reviewer: true
+  sample_conditions:
+    - protected_area
+    - large_diff
+    - weak_tests
+    - cross_cutting

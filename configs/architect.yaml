@@ -1,0 +1,28 @@
+# Architect Tier Configuration
+# Complex redesigns and major features requiring deep reasoning
+
+tier: architect
+max_agents: 5
+primary_model: opus
+fallback_model: sonnet
+quality_threshold: 8
+max_ralph_iterations: 7
+questions_allowed: unlimited
+
+# Architect-specific settings
+timeout: 30m
+
+# Model selection
+models:
+  default: opus
+  fallback: sonnet
+
+# Review settings
+review:
+  human_review_required: true
+  sampled_second_reviewer: true
+  sample_conditions:
+    - protected_area
+    - large_diff
+    - weak_tests
+    - cross_cutting
