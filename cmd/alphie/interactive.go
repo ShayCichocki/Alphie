@@ -253,6 +253,11 @@ func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.Orchestrator
 				return
 			}
 
+			// Skip session_done events in interactive mode - users can keep submitting tasks
+			if event.Type == orchestrator.EventSessionDone {
+				continue
+			}
+
 			msg := tui.OrchestratorEventMsg{
 				Type:       string(event.Type),
 				TaskID:     event.TaskID,
@@ -270,7 +275,7 @@ func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.Orchestrator
 
 			program.Send(msg)
 
-			// Track task completion (no session done in interactive mode - users can keep submitting)
+			// Track task completion
 			if event.Type == orchestrator.EventTaskCompleted || event.Type == orchestrator.EventTaskFailed {
 				atomic.AddInt32(activeTaskCount, -1)
 			}

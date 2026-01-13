@@ -382,6 +382,17 @@ func (a *PanelApp) findOrCreateTask(id string) *models.Task {
 	return task
 }
 
+// FocusedPanel returns the index of the currently focused panel.
+func (a *PanelApp) FocusedPanel() int {
+	return a.focusedPanel
+}
+
+// SetFocusedPanel sets which panel is focused.
+func (a *PanelApp) SetFocusedPanel(panel int) {
+	a.focusedPanel = panel
+	a.updatePanelFocus()
+}
+
 // NewPanelProgram creates a new Bubbletea program for the panel-based TUI.
 // The returned program can receive messages via Send().
 func NewPanelProgram() (*tea.Program, *PanelApp) {

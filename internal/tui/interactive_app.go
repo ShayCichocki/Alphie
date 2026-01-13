@@ -16,6 +16,9 @@ type InteractiveApp struct {
 	height     int
 	quitting   bool
 
+	// inputFocused tracks whether the input field has focus (vs panels)
+	inputFocused bool
+
 	// Callback for when a task is submitted
 	onTaskSubmit func(task string, tier models.Tier)
 }
@@ -23,8 +26,9 @@ type InteractiveApp struct {
 // NewInteractiveApp creates a new InteractiveApp.
 func NewInteractiveApp() *InteractiveApp {
 	return &InteractiveApp{
-		panelApp:   NewPanelApp(),
-		inputField: NewInputField(),
+		panelApp:     NewPanelApp(),
+		inputField:   NewInputField(),
+		inputFocused: true, // Input starts with focus
 	}
 }
 
@@ -49,11 +53,64 @@ func (a *InteractiveApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.quitting = true
 			return a, tea.Quit
 
-		case "tab", "shift+tab":
-			// Forward navigation keys to PanelApp
-			var cmd tea.Cmd
-			_, cmd = a.panelApp.Update(msg)
-			return a, cmd
+		case "tab":
+			// Cycle focus: input -> Tasks -> Agents -> Logs -> input
+			if a.inputFocused {
+				// Move focus from input to first panel (Tasks)
+				a.inputFocused = false
+				a.inputField.Blur()
+				a.panelApp.SetFocusedPanel(PanelTasks)
+				return a, nil
+			} else if a.panelApp.FocusedPanel() == PanelLogs {
+				// At last panel, cycle back to input
+				a.inputFocused = true
+				return a, a.inputField.Focus()
+			} else {
+				// Cycle to next panel
+				var cmd tea.Cmd
+				_, cmd = a.panelApp.Update(msg)
+				return a, cmd
+			}
+
+		case "shift+tab":
+			// Reverse cycle: input -> Logs -> Agents -> Tasks -> input
+			if a.inputFocused {
+				// Move focus from input to last panel (Logs)
+				a.inputFocused = false
+				a.inputField.Blur()
+				a.panelApp.SetFocusedPanel(PanelLogs)
+				return a, nil
+			} else if a.panelApp.FocusedPanel() == PanelTasks {
+				// At first panel, cycle back to input
+				a.inputFocused = true
+				return a, a.inputField.Focus()
+			} else {
+				// Cycle to previous panel
+				var cmd tea.Cmd
+				_, cmd = a.panelApp.Update(msg)
+				return a, cmd
+			}
+
+		case "escape":
+			// Return focus to input field
+			if !a.inputFocused {
+				a.inputFocused = true
+				return a, a.inputField.Focus()
+			}
+
+		default:
+			// Route other keys based on focus
+			if a.inputFocused {
+				// Input has focus - send to input field
+				var inputCmd tea.Cmd
+				a.inputField, inputCmd = a.inputField.Update(msg)
+				return a, inputCmd
+			} else {
+				// Panel has focus - send to panel app
+				var cmd tea.Cmd
+				_, cmd = a.panelApp.Update(msg)
+				return a, cmd
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -79,11 +136,6 @@ func (a *InteractiveApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 		return a, tea.Batch(cmds...)
 	}
-
-	// Update input field (it handles all key events except ctrl+c)
-	var inputCmd tea.Cmd
-	a.inputField, inputCmd = a.inputField.Update(msg)
-	cmds = append(cmds, inputCmd)
 
 	return a, tea.Batch(cmds...)
 }
