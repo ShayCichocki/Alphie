@@ -98,6 +98,10 @@ func (m *MergeHandler) Merge(agentBranch string) (*MergeResult, error) {
 		// Rebase failed - abort it.
 		_ = m.runGit("rebase", "--abort")
 
+		// CRITICAL: Checkout back to session branch before returning.
+		// Otherwise we leave the repo on the agent branch.
+		_ = m.runGit("checkout", m.sessionBranch)
+
 		// Step 4: Return NeedsSemanticMerge.
 		return &MergeResult{
 			Success:            false,
@@ -209,6 +213,78 @@ func (m *MergeHandler) getMergeChangedFiles() ([]string, error) {
 	}
 
 	return files, nil
+}
+
+// MergeWithRetry attempts to merge with multiple intelligent retry attempts.
+// It will try merge, and on conflict: abort, pull latest, rebase, and retry.
+// After maxRetries failures, it returns NeedsSemanticMerge = true.
+func (m *MergeHandler) MergeWithRetry(agentBranch string, maxRetries int) (*MergeResult, error) {
+	if maxRetries < 1 {
+		maxRetries = 3
+	}
+
+	var lastConflictFiles []string
+	var lastError error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Step 1: Checkout session branch and pull latest
+		if err := m.runGit("checkout", m.sessionBranch); err != nil {
+			return &MergeResult{
+				Success: false,
+				Error:   fmt.Errorf("checkout session branch (attempt %d): %w", attempt, err),
+			}, nil
+		}
+
+		// Pull latest changes (in case other agents have merged)
+		_ = m.runGit("pull", "--ff-only")
+
+		// Step 2: Attempt merge
+		if err := m.runGit("merge", agentBranch, "--no-ff"); err == nil {
+			// Merge succeeded
+			diff, _ := m.getMergeDiff()
+			changedFiles, _ := m.getMergeChangedFiles()
+			return &MergeResult{
+				Success:      true,
+				Diff:         diff,
+				ChangedFiles: changedFiles,
+			}, nil
+		}
+
+		// Merge failed - get conflict files
+		lastConflictFiles, _ = m.GetConflictedFiles()
+
+		// Abort the failed merge
+		_ = m.AbortMerge()
+
+		// Step 3: Rebase agent branch onto session branch
+		if err := m.runGit("checkout", agentBranch); err != nil {
+			lastError = fmt.Errorf("checkout agent branch for rebase (attempt %d): %w", attempt, err)
+			_ = m.runGit("checkout", m.sessionBranch)
+			continue
+		}
+
+		if err := m.runGit("rebase", m.sessionBranch); err != nil {
+			// Rebase failed - abort and try again if we have retries left
+			_ = m.runGit("rebase", "--abort")
+			_ = m.runGit("checkout", m.sessionBranch)
+			lastError = fmt.Errorf("rebase failed (attempt %d): %w", attempt, err)
+			continue
+		}
+
+		// Rebase succeeded - checkout session branch for next merge attempt
+		if err := m.runGit("checkout", m.sessionBranch); err != nil {
+			lastError = fmt.Errorf("checkout session after rebase (attempt %d): %w", attempt, err)
+			continue
+		}
+	}
+
+	// All retries exhausted
+	return &MergeResult{
+		Success:            false,
+		ConflictFiles:      lastConflictFiles,
+		NeedsSemanticMerge: true,
+		Error:              fmt.Errorf("merge failed after %d attempts: %w", maxRetries, lastError),
+	}, nil
 }
 
 // DeleteBranch deletes the specified branch.

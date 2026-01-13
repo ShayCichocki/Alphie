@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -338,6 +339,9 @@ func (o *Orchestrator) Run(ctx context.Context, request string) error {
 		// On error, try to cleanup the session
 		if !o.greenfield {
 			_ = o.sessionMgr.Cleanup()
+		} else {
+			// In greenfield mode, ensure we're back on main branch
+			_ = o.checkoutMain()
 		}
 		o.updateSessionStatus(state.SessionFailed)
 		return fmt.Errorf("execution loop: %w", err)
@@ -828,8 +832,16 @@ func (o *Orchestrator) performMerge(ctx context.Context, taskID string, result *
 	// The agent branch is typically named after the task
 	agentBranch := fmt.Sprintf("agent-%s", taskID)
 
-	// Attempt merge
-	mergeResult, err := o.merger.Merge(agentBranch)
+	// Attempt merge - use retry logic for greenfield mode
+	var mergeResult *MergeResult
+	var err error
+	if o.greenfield {
+		// Greenfield mode: use intelligent retry with rebase
+		mergeResult, err = o.merger.MergeWithRetry(agentBranch, 3)
+	} else {
+		// Normal mode: single merge attempt (already has one rebase retry built in)
+		mergeResult, err = o.merger.Merge(agentBranch)
+	}
 	if err != nil {
 		return fmt.Errorf("merge operation: %w", err)
 	}
@@ -858,9 +870,14 @@ func (o *Orchestrator) performMerge(ctx context.Context, taskID string, result *
 
 	// If needs semantic merge, try that
 	if mergeResult.NeedsSemanticMerge && o.semanticMerger != nil {
+		// In greenfield mode, target branch is "main", otherwise use session branch
+		targetBranch := o.sessionMgr.GetBranchName()
+		if o.greenfield {
+			targetBranch = "main"
+		}
 		semanticResult, err := o.semanticMerger.Merge(
 			ctx,
-			o.sessionMgr.GetBranchName(),
+			targetBranch,
 			agentBranch,
 			mergeResult.ConflictFiles,
 		)
@@ -1016,8 +1033,25 @@ func (o *Orchestrator) Stop() error {
 		if err := o.sessionMgr.Cleanup(); err != nil {
 			return fmt.Errorf("cleanup session: %w", err)
 		}
+	} else if o.greenfield {
+		// In greenfield mode, ensure we're back on main branch
+		_ = o.checkoutMain()
 	}
 
+	return nil
+}
+
+// checkoutMain ensures the repository is on the main branch.
+// This is used in greenfield mode to restore state after errors.
+func (o *Orchestrator) checkoutMain() error {
+	cmd := exec.Command("git", "checkout", "main")
+	cmd.Dir = o.repoPath
+	if err := cmd.Run(); err != nil {
+		// Try master if main doesn't exist
+		cmd = exec.Command("git", "checkout", "master")
+		cmd.Dir = o.repoPath
+		return cmd.Run()
+	}
 	return nil
 }
 
