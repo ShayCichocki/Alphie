@@ -13,6 +13,7 @@ type FallbackStrategy struct {
 	merger        *merge.Handler
 	repoPath      string
 	sessionBranch string
+	verifier      *MergeVerifier
 }
 
 // NewFallbackStrategy creates a new FallbackStrategy.
@@ -21,7 +22,13 @@ func NewFallbackStrategy(merger *merge.Handler, repoPath, sessionBranch string) 
 		merger:        merger,
 		repoPath:      repoPath,
 		sessionBranch: sessionBranch,
+		verifier:      nil, // Set via SetVerifier
 	}
+}
+
+// SetVerifier sets the merge verifier for post-merge validation.
+func (f *FallbackStrategy) SetVerifier(verifier *MergeVerifier) {
+	f.verifier = verifier
 }
 
 // Attempt tries fallback merge strategies for the given conflicts.
@@ -94,6 +101,35 @@ func (f *FallbackStrategy) Attempt(req *MergeRequest, conflicts []string) MergeO
 				Reason:       "smart merge succeeded but commit failed",
 			}
 		}
+
+		// Post-merge verification: ensure the smart-merged code builds
+		if f.verifier != nil && f.verifier.ShouldVerify() {
+			debugLog("[fallback] running post-merge verification for task %s", req.TaskID)
+			verifyResult, err := f.verifier.VerifyMerge(req.Ctx, f.sessionBranch)
+			if err != nil || !verifyResult.Passed {
+				// Build verification failed - rollback the commit
+				errorMsg := "build verification failed after smart merge"
+				if verifyResult.Error != nil {
+					errorMsg = verifyResult.Error.Error()
+				}
+
+				debugLog("[fallback] verification failed for task %s: %v", req.TaskID, errorMsg)
+
+				// Rollback the commit we just made
+				if rollbackErr := f.merger.GitRunner().Reset("HEAD~1"); rollbackErr != nil {
+					debugLog("[fallback] CRITICAL: verification failed AND rollback failed for task %s", req.TaskID)
+				}
+
+				return MergeOutcome{
+					Success:      false,
+					FallbackUsed: true,
+					Error:        fmt.Errorf("post-merge verification failed: %w", verifyResult.Error),
+					Reason:       "smart merge committed but build failed",
+				}
+			}
+			debugLog("[fallback] verification passed for task %s", req.TaskID)
+		}
+
 		return MergeOutcome{
 			Success:      true,
 			FallbackUsed: true,
@@ -153,6 +189,34 @@ func (f *FallbackStrategy) handleRemainingConflicts(req *MergeRequest, conflicts
 			Error:        fmt.Errorf("fallback commit failed: %w", err),
 			Reason:       "fallback commit failed",
 		}
+	}
+
+	// Post-merge verification: ensure the fallback-merged code builds
+	if f.verifier != nil && f.verifier.ShouldVerify() {
+		debugLog("[fallback] running post-merge verification for task %s", req.TaskID)
+		verifyResult, err := f.verifier.VerifyMerge(req.Ctx, f.sessionBranch)
+		if err != nil || !verifyResult.Passed {
+			// Build verification failed - rollback the commit
+			errorMsg := "build verification failed after fallback merge"
+			if verifyResult.Error != nil {
+				errorMsg = verifyResult.Error.Error()
+			}
+
+			debugLog("[fallback] verification failed for task %s: %v", req.TaskID, errorMsg)
+
+			// Rollback the commit we just made
+			if rollbackErr := f.merger.GitRunner().Reset("HEAD~1"); rollbackErr != nil {
+				debugLog("[fallback] CRITICAL: verification failed AND rollback failed for task %s", req.TaskID)
+			}
+
+			return MergeOutcome{
+				Success:      false,
+				FallbackUsed: true,
+				Error:        fmt.Errorf("post-merge verification failed: %w", verifyResult.Error),
+				Reason:       "fallback merge committed but build failed",
+			}
+		}
+		debugLog("[fallback] verification passed for task %s", req.TaskID)
 	}
 
 	reason := "fallback accepted session branch version for non-code conflicts"

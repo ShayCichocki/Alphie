@@ -3,6 +3,7 @@ package orchestrator
 
 import (
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/ShayCichocki/alphie/internal/prog"
 	"github.com/ShayCichocki/alphie/internal/protect"
 	"github.com/ShayCichocki/alphie/internal/state"
+	"github.com/ShayCichocki/alphie/internal/structure"
 	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
@@ -75,6 +77,22 @@ type OrchestratorConfig struct {
 	// Used to link epic_created events back to the original task for deduplication.
 	OriginalTaskID string
 
+	// Verification options
+	// EnablePostMergeVerification enables build verification after merge.
+	// When enabled, the orchestrator runs the project's build command after each merge
+	// and rolls back the merge if the build fails.
+	// Use a pointer to distinguish between "not set" (nil = use default true) and "explicitly disabled" (false).
+	EnablePostMergeVerification *bool
+	// VerificationTimeout is the maximum time to wait for build verification.
+	// Default: 2 minutes if not set or zero.
+	VerificationTimeout time.Duration
+
+	// Structure guidance options
+	// EnableStructureGuidance enables directory structure guidance for agents.
+	// When enabled, agents receive information about common directory patterns in prompts.
+	// Use a pointer to distinguish between "not set" (nil = use default true) and "explicitly disabled" (false).
+	EnableStructureGuidance *bool
+
 	// Injectable dependencies (nil = use defaults)
 	// Decomposer decomposes user requests into tasks. If nil, NewDecomposer is used.
 	Decomposer *decompose.Decomposer
@@ -107,6 +125,7 @@ type Orchestrator struct {
 	secondReviewer *SecondReviewer
 	sessionMgr     *SessionBranchManager
 	mergeQueue     *MergeQueue
+	mergeVerifier  *MergeVerifier
 
 	// Support components
 	collision          *CollisionChecker
@@ -116,6 +135,7 @@ type Orchestrator struct {
 	progCoord          *ProgCoordinator
 	learningCoord      *LearningCoordinator
 	effectivenessTracker *learning.EffectivenessTracker
+	structureAnalyzer  *structure.StructureAnalyzer
 
 	// External dependencies
 	stateDB       state.StateStore
@@ -278,6 +298,51 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	semanticMerger := mergeStrategy.CreateSemanticMerger()
 	secondReviewer := mergeStrategy.CreateSecondReviewer()
 
+	// Apply configuration defaults
+	// Verification defaults to enabled unless explicitly disabled
+	enableVerification := true
+	if cfg.EnablePostMergeVerification != nil {
+		enableVerification = *cfg.EnablePostMergeVerification
+	}
+
+	verificationTimeout := cfg.VerificationTimeout
+	if verificationTimeout == 0 {
+		verificationTimeout = 2 * time.Minute
+	}
+
+	// Structure guidance defaults to enabled unless explicitly disabled
+	enableStructure := true
+	if cfg.EnableStructureGuidance != nil {
+		enableStructure = *cfg.EnableStructureGuidance
+	}
+
+	// Create merge verifier for post-merge build verification (if enabled)
+	var mergeVerifier *MergeVerifier
+	if enableVerification {
+		projectInfo := GetProjectTypeInfo(cfg.RepoPath)
+		mergeVerifier = NewMergeVerifier(cfg.RepoPath, projectInfo, verificationTimeout)
+		logger.Log("[orchestrator] post-merge verification enabled (timeout: %v, project type: %s)", verificationTimeout, projectInfo.Type)
+	} else {
+		logger.Log("[orchestrator] post-merge verification disabled")
+	}
+
+	// Create structure analyzer for directory pattern guidance (if enabled)
+	var structureAnalyzer *structure.StructureAnalyzer
+	if enableStructure {
+		structureAnalyzer = structure.NewAnalyzer(cfg.RepoPath)
+		if err := structureAnalyzer.AnalyzeRepository(); err != nil {
+			logger.Log("[orchestrator] warning: structure analysis failed: %v", err)
+			// Don't fail - structure guidance is optional
+		} else {
+			rules := structureAnalyzer.GetRules()
+			if rules != nil {
+				logger.Log("[orchestrator] structure guidance enabled (%d patterns detected)", len(rules.Rules))
+			}
+		}
+	} else {
+		logger.Log("[orchestrator] structure guidance disabled")
+	}
+
 	// Create immutable runtime config
 	runConfig := &OrchestratorRunConfig{
 		SessionID:      sessionID,
@@ -291,29 +356,31 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	}
 
 	o := &Orchestrator{
-		config:         runConfig,
-		decomposer:     decomposer,
-		graph:          g,
-		scheduler:      nil, // Created in Run after graph is built
-		spawner:        spawner,
-		merger:         merger,
-		semanticMerger: semanticMerger,
-		secondReviewer: secondReviewer,
-		sessionMgr:     sessionMgr,
-		mergeQueue:     nil, // Created in Run
-		collision:      collision,
-		protected:      protected,
-		overrideGate:   overrideGate,
-		learnings:      cfg.LearningSystem,
-		progCoord:      progCoord,
-		learningCoord:  learningCoord,
-		stateDB:        cfg.StateDB,
-		runnerFactory:  cfg.ClaudeRunnerFactory,
-		logger:         logger,
-		emitter:        emitter,
-		stopCh:         make(chan struct{}),
-		registry:       NewAgentRegistry(),
-		pauseCtrl:      NewPauseController(),
+		config:            runConfig,
+		decomposer:        decomposer,
+		graph:             g,
+		scheduler:         nil, // Created in Run after graph is built
+		spawner:           spawner,
+		merger:            merger,
+		semanticMerger:    semanticMerger,
+		secondReviewer:    secondReviewer,
+		sessionMgr:        sessionMgr,
+		mergeQueue:        nil, // Created in Run
+		mergeVerifier:     mergeVerifier,
+		collision:         collision,
+		protected:         protected,
+		overrideGate:      overrideGate,
+		learnings:         cfg.LearningSystem,
+		progCoord:         progCoord,
+		learningCoord:     learningCoord,
+		structureAnalyzer: structureAnalyzer,
+		stateDB:           cfg.StateDB,
+		runnerFactory:     cfg.ClaudeRunnerFactory,
+		logger:            logger,
+		emitter:           emitter,
+		stopCh:            make(chan struct{}),
+		registry:          NewAgentRegistry(),
+		pauseCtrl:         NewPauseController(),
 	}
 
 	// Initialize effectiveness tracker if learning system is available

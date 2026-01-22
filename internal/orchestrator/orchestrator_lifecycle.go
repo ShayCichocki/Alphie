@@ -174,6 +174,7 @@ func (o *Orchestrator) createMergeQueue() *MergeQueue {
 		DefaultMergeQueueConfig(),
 		o.emitter.Channel(),
 		o.config.Policy,
+		o.mergeVerifier,
 	)
 
 	// Set orchestrator and git runner on the processor for merge conflict resolution

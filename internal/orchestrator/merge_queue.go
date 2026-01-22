@@ -119,7 +119,7 @@ func NewMergeQueue(
 	config MergeQueueConfig,
 	eventCh chan<- OrchestratorEvent,
 ) *MergeQueue {
-	return NewMergeQueueWithPolicy(merger, semanticMerger, semanticMergerFactory, sessionID, sessionBranch, greenfield, config, eventCh, nil)
+	return NewMergeQueueWithPolicy(merger, semanticMerger, semanticMergerFactory, sessionID, sessionBranch, greenfield, config, eventCh, nil, nil)
 }
 
 // NewMergeQueueWithPolicy creates a new merge queue with configurable buffer size from policy.
@@ -133,6 +133,7 @@ func NewMergeQueueWithPolicy(
 	config MergeQueueConfig,
 	eventCh chan<- OrchestratorEvent,
 	policyConfig *policy.Config,
+	verifier *MergeVerifier,
 ) *MergeQueue {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -166,6 +167,11 @@ func NewMergeQueueWithPolicy(
 
 	// Create the fallback strategy
 	fallback := NewFallbackStrategy(merger, merger.RepoPath(), sessionBranch)
+
+	// Set the verifier on the fallback strategy if provided
+	if verifier != nil {
+		fallback.SetVerifier(verifier)
+	}
 
 	// Create checkpoint and rollback managers
 	gitRepo := merger.GitRunner()

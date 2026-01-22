@@ -22,6 +22,7 @@ type SpawnOptions struct {
 	OnProgress     func(ProgressReport)
 	WorkersRunning int
 	WorkersBlocked int
+	StructureRules interface{} // Structure guidance for agent (uses interface{} for flexibility)
 }
 
 // SpawnResult contains the outcome of a spawned agent.
@@ -111,6 +112,7 @@ func (s *DefaultAgentSpawner) Spawn(ctx context.Context, task *models.Task, opts
 			EnableRalphLoop:    true,
 			EnableQualityGates: true,
 			Baseline:           opts.Baseline,
+			StructureRules:     opts.StructureRules,
 			OnProgress: func(update agent.ProgressUpdate) {
 				if opts.OnProgress != nil {
 					opts.OnProgress(ProgressReport{

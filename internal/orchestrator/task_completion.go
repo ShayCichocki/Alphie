@@ -149,9 +149,54 @@ func (o *Orchestrator) handleSuccessfulTask(ctx context.Context, task *models.Ta
 			})
 			return mergeOutcome, fmt.Errorf("merge failed: %w", err)
 		}
+
+		// Post-merge verification: ensure the merged code builds
+		if o.mergeVerifier != nil && o.mergeVerifier.ShouldVerify() {
+			o.progCoord.LogTask(task.ID, "Verifying merged code builds...")
+
+			verifyResult, err := o.mergeVerifier.VerifyMerge(ctx, o.GetSessionBranch())
+			if err != nil || !verifyResult.Passed {
+				// Build verification failed - rollback the merge
+				errorMsg := "build verification failed"
+				if verifyResult.Error != nil {
+					errorMsg = verifyResult.Error.Error()
+				}
+
+				o.progCoord.LogTask(task.ID, fmt.Sprintf("Build verification failed: %s", errorMsg))
+				o.logger.Log("[task_completion] build verification failed for task %s: %v", task.ID, errorMsg)
+
+				// Rollback by resetting to the commit before the merge
+				if rollbackErr := o.merger.GitRunner().Reset("HEAD~1"); rollbackErr != nil {
+					// Rollback also failed - this is serious
+					o.logger.Log("[task_completion] CRITICAL: verification failed AND rollback failed for task %s", task.ID)
+					return mergeOutcome, fmt.Errorf("verification failed (%v) and rollback failed (%v)", errorMsg, rollbackErr)
+				}
+
+				o.progCoord.LogTask(task.ID, "Merge rolled back due to build failure")
+				o.logger.Log("[task_completion] rolled back merge for task %s", task.ID)
+
+				// Emit verification failure event
+				o.emitEvent(OrchestratorEvent{
+					Type:      EventTaskFailed,
+					TaskID:    task.ID,
+					TaskTitle: task.Title,
+					ParentID:  task.ParentID,
+					AgentID:   result.AgentID,
+					Message:   fmt.Sprintf("Post-merge verification failed: %s", errorMsg),
+					Error:     fmt.Errorf("build verification failed: %w", verifyResult.Error),
+					Timestamp: time.Now(),
+				})
+
+				return mergeOutcome, fmt.Errorf("post-merge verification failed: %w", verifyResult.Error)
+			}
+
+			// Verification passed
+			o.progCoord.LogTask(task.ID, fmt.Sprintf("Build verification passed (%v)", verifyResult.Duration))
+			o.logger.Log("[task_completion] build verification passed for task %s in %v", task.ID, verifyResult.Duration)
+		}
 	}
 
-	// Mark task as done (only after successful merge)
+	// Mark task as done (only after successful merge AND verification)
 	task.Status = models.TaskStatusDone
 	now := time.Now()
 	task.CompletedAt = &now

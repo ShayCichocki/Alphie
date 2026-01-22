@@ -202,6 +202,9 @@ type ExecuteOptions struct {
 	// Baseline is the session baseline for regression detection.
 	// When set, quality gates compare against baseline to detect new failures.
 	Baseline *Baseline
+	// StructureRules provides directory structure guidance to the agent.
+	// When set, the agent receives information about common directory patterns.
+	StructureRules interface{} // Uses interface{} to avoid circular dependency
 }
 
 // Execute runs a single task with a single agent.
