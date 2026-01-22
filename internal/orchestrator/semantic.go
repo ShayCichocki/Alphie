@@ -196,11 +196,19 @@ func (m *SemanticMerger) Merge(ctx context.Context, branch1, branch2 string, con
 	}
 
 	// Wait for process to complete
-	if err := m.claude.Wait(); err != nil {
+	waitErr := m.claude.Wait()
+
+	// Always kill the process to ensure cleanup
+	killErr := m.claude.Kill()
+	if killErr != nil {
+		// Log but don't fail - process may already be dead
+	}
+
+	if waitErr != nil {
 		return &SemanticMergeResult{
 			Success:    false,
 			NeedsHuman: true,
-			Reason:     fmt.Sprintf("Claude process failed: %v", err),
+			Reason:     fmt.Sprintf("Claude process failed: %v", waitErr),
 		}, nil
 	}
 

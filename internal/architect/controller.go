@@ -4,6 +4,7 @@ package architect
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/ShayCichocki/alphie/internal/agent"
@@ -104,9 +105,14 @@ type Controller struct {
 	tokenTracker *agent.TokenTracker
 
 	// Current state tracking (for progress events during execution)
-	currentIteration     int
-	currentFeaturesTotal int
+	currentIteration        int
+	currentFeaturesTotal    int
 	currentFeaturesComplete int
+
+	// Feature completion tracking (for real-time updates during execution)
+	featureToTasks map[string][]string // maps feature ID to task IDs
+	completedTasks map[string]bool     // tracks which tasks are done
+	featureGaps    map[string]Gap      // maps feature ID to gap details
 }
 
 // ControllerOption is a functional option for configuring a Controller.
@@ -372,6 +378,44 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 			iterResult.EpicID = planResult.EpicID
 			iterResult.TasksCreated = len(planResult.TaskIDs)
 
+			// Initialize feature tracking for this iteration
+			c.featureToTasks = make(map[string][]string)
+			c.completedTasks = make(map[string]bool)
+			c.featureGaps = make(map[string]Gap)
+
+			// Build feature→task mapping
+			// TaskIDs correspond 1-to-1 with gaps in the order they appear
+			if len(planResult.TaskIDs) == len(gapReport.Gaps) {
+				for i, taskID := range planResult.TaskIDs {
+					gap := gapReport.Gaps[i]
+					featureID := gap.FeatureID
+
+					// Track which tasks belong to this feature
+					c.featureToTasks[featureID] = append(c.featureToTasks[featureID], taskID)
+					// Store gap details for later
+					c.featureGaps[featureID] = gap
+				}
+			} else {
+				// Mismatch between tasks and gaps - try to map what we can
+				log.Printf("[architect] WARNING: Task/Gap count mismatch (tasks=%d, gaps=%d), progress tracking may be inaccurate",
+					len(planResult.TaskIDs), len(gapReport.Gaps))
+
+				// Build best-effort mapping using min of both lengths
+				minLen := len(planResult.TaskIDs)
+				if len(gapReport.Gaps) < minLen {
+					minLen = len(gapReport.Gaps)
+				}
+
+				for i := 0; i < minLen; i++ {
+					taskID := planResult.TaskIDs[i]
+					gap := gapReport.Gaps[i]
+					featureID := gap.FeatureID
+
+					c.featureToTasks[featureID] = append(c.featureToTasks[featureID], taskID)
+					c.featureGaps[featureID] = gap
+				}
+			}
+
 			// Step 5: Execute epics via /alphie skill pattern
 			if planResult.EpicID != "" {
 				c.emitProgress(ProgressEvent{
@@ -551,6 +595,9 @@ func (c *Controller) handleOrchestratorEvent(event orchestrator.OrchestratorEven
 			WorkersBlocked:   event.WorkersBlocked,
 		})
 	case orchestrator.EventTaskCompleted:
+		// Update feature completion tracking
+		c.updateFeatureCompletion(event.TaskID)
+
 		c.emitProgress(ProgressEvent{
 			Phase:            PhaseExecuting,
 			Iteration:        c.currentIteration,
@@ -575,6 +622,52 @@ func (c *Controller) handleOrchestratorEvent(event orchestrator.OrchestratorEven
 				WorkersRunning:   event.WorkersRunning,
 				WorkersBlocked:   event.WorkersBlocked,
 			})
+		}
+	}
+}
+
+// updateFeatureCompletion checks if completing this task completes a feature,
+// and if so, increments the feature completion count.
+func (c *Controller) updateFeatureCompletion(taskID string) {
+	// Skip if tracking not initialized
+	if c.featureToTasks == nil || c.completedTasks == nil {
+		return
+	}
+
+	// Mark this task as completed
+	c.completedTasks[taskID] = true
+
+	// Find which feature(s) this task belongs to
+	for featureID, taskIDs := range c.featureToTasks {
+		// Check if this feature contains the completed task
+		hasTask := false
+		for _, tid := range taskIDs {
+			if tid == taskID {
+				hasTask = true
+				break
+			}
+		}
+
+		if !hasTask {
+			continue
+		}
+
+		// Check if all tasks for this feature are now complete
+		allComplete := true
+		for _, tid := range taskIDs {
+			if !c.completedTasks[tid] {
+				allComplete = false
+				break
+			}
+		}
+
+		// If all tasks complete, increment the feature count (only once per feature)
+		if allComplete {
+			// Remove the feature from tracking so we don't count it again
+			delete(c.featureToTasks, featureID)
+			c.currentFeaturesComplete++
+			log.Printf("[architect] Feature %s completed, total features complete: %d/%d",
+				featureID, c.currentFeaturesComplete, c.currentFeaturesTotal)
 		}
 	}
 }

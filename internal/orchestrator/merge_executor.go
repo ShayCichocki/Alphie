@@ -162,12 +162,14 @@ func (e *MergeProcessor) trySemanticMergeWithRetry(ctx context.Context, req *Mer
 			}
 		}
 
-		// Get a semantic merger - try factory first for fresh instance on retries
-		merger := e.semanticMerger
+		// Get a semantic merger - always use factory for fresh instance on retries
+		var merger *SemanticMerger
 		if attempt > 0 && e.factory != nil {
-			// On retry, create a fresh merger instance
-			debugLog("[merge-executor] creating fresh semantic merger for retry (above normal limits)")
+			debugLog("[merge-executor] creating fresh semantic merger for retry attempt %d", attempt)
 			merger = e.factory()
+		} else {
+			// First attempt can use existing instance
+			merger = e.semanticMerger
 		}
 
 		if merger == nil {
@@ -179,6 +181,15 @@ func (e *MergeProcessor) trySemanticMergeWithRetry(ctx context.Context, req *Mer
 		mergeCtx, cancel := context.WithTimeout(ctx, e.config.SemanticMergeTimeout)
 
 		result, err := merger.Merge(mergeCtx, targetBranch, req.AgentBranch, conflictFiles)
+
+		// CRITICAL: Always cleanup the Claude process after merge attempt
+		if merger != nil && merger.claude != nil {
+			killErr := merger.claude.Kill()
+			if killErr != nil {
+				debugLog("[merge-executor] warning: failed to kill claude process: %v", killErr)
+			}
+		}
+
 		cancel()
 
 		if err != nil {

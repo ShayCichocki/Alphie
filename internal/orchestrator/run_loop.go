@@ -21,6 +21,10 @@ func (o *Orchestrator) runLoop(ctx context.Context) error {
 	// Aggregate channel for completion notifications
 	completionCh := make(chan string, o.config.MaxAgents)
 
+	// Create ticker for periodic scheduling checks
+	ticker := time.NewTicker(o.config.Policy.Loop.PollInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -61,7 +65,7 @@ func (o *Orchestrator) runLoop(ctx context.Context) error {
 				}
 			}
 
-		default:
+		case <-ticker.C:
 			// Check if we're done
 			o.logger.Log("[runLoop] checking for ready tasks...")
 			ready := o.scheduler.Schedule()
@@ -167,12 +171,19 @@ func (o *Orchestrator) spawnAgents(ctx context.Context, ready []*models.Task, in
 		// Create agent context
 		taskCtx, taskCancel := context.WithCancel(ctx)
 
+		// Get structure rules for this task
+		var structureRules interface{}
+		if o.structureAnalyzer != nil {
+			structureRules = o.structureAnalyzer.GetRules()
+		}
+
 		agentID, resultCh := o.spawner.Spawn(taskCtx, task, SpawnOptions{
 			Tier:           o.config.Tier,
 			Learnings:      taskLearnings,
 			Baseline:       o.config.Baseline,
 			WorkersRunning: workersRunning + i + 1,
 			WorkersBlocked: 0,
+			StructureRules: structureRules,
 		})
 
 		// Create agent model for state persistence
