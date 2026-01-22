@@ -668,6 +668,17 @@ func (c *Controller) updateFeatureCompletion(taskID string) {
 			c.currentFeaturesComplete++
 			log.Printf("[architect] Feature %s completed, total features complete: %d/%d",
 				featureID, c.currentFeaturesComplete, c.currentFeaturesTotal)
+
+			// Emit progress event to update TUI
+			c.emitProgress(ProgressEvent{
+				Phase:            PhaseExecuting,
+				Iteration:        c.currentIteration,
+				MaxIterations:    c.MaxIterations,
+				FeaturesComplete: c.currentFeaturesComplete,
+				FeaturesTotal:    c.currentFeaturesTotal,
+				Message:          fmt.Sprintf("Feature completed: %s (%d/%d)", featureID, c.currentFeaturesComplete, c.currentFeaturesTotal),
+				Cost:             c.tokenTracker.GetCost(),
+			})
 		}
 	}
 }
