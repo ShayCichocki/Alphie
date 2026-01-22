@@ -406,6 +406,13 @@ func (mq *MergeQueue) processMerge(req *MergeRequest) MergeOutcome {
 				fallbackOutcome.Reason, outcome.ConflictFiles)
 			log.Printf("[merge_queue] ERROR: %s for task %s (error: %v)", errorMsg, req.TaskID, fallbackOutcome.Error)
 
+			// If fallback failed due to code conflicts, escalate to resolver
+			// (processor has access to orchestrator/factory for spawning)
+			if len(fallbackOutcome.ConflictFiles) > 0 {
+				log.Printf("[merge_queue] Escalating code conflicts to processor for resolver spawn")
+				return mq.processor.HandleFallbackFailure(req.Ctx, req, fallbackOutcome.ConflictFiles)
+			}
+
 			mq.emitEvent(OrchestratorEvent{
 				Type:      EventMergeCompleted,
 				TaskID:    req.TaskID,

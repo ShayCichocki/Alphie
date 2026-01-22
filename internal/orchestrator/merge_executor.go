@@ -433,3 +433,41 @@ func (e *MergeProcessor) ConflictFiles(req *MergeRequest) []string {
 	}
 	return result.ConflictFiles
 }
+
+// HandleFallbackFailure handles the case where fallback merge fails with code conflicts.
+// This spawns a dedicated merge resolver agent to handle the conflicts.
+func (e *MergeProcessor) HandleFallbackFailure(ctx context.Context, req *MergeRequest, conflictFiles []string) MergeOutcome {
+	debugLog("[merge-executor] handling fallback failure for task %s with %d conflict files", req.TaskID, len(conflictFiles))
+
+	// If we have a human resolver, escalate to human
+	if e.humanResolver != nil {
+		debugLog("[merge-executor] escalating to human resolution for task %s", req.TaskID)
+		return e.escalateToHuman(ctx, req, conflictFiles, 0)
+	}
+
+	// No human resolver - BLOCK ORCHESTRATOR AND SPAWN DEDICATED AGENT
+	if e.orchestrator != nil && e.factory != nil {
+		debugLog("[merge-executor] spawning dedicated merge resolver agent for task %s (from fallback failure)", req.TaskID)
+
+		// Set merge conflict state - blocks all scheduling
+		e.orchestrator.SetMergeConflict(req.TaskID, conflictFiles)
+
+		// Spawn merge resolver agent asynchronously
+		go e.spawnMergeResolverAgent(ctx, req, conflictFiles)
+
+		return MergeOutcome{
+			Success:       false,
+			Error:         fmt.Errorf("fallback failed with code conflicts, spawning resolver agent"),
+			Reason:        fmt.Sprintf("spawning dedicated resolver for %d code conflicts", len(conflictFiles)),
+			ConflictFiles: conflictFiles,
+		}
+	}
+
+	// No resolver available - just return failure
+	return MergeOutcome{
+		Success:       false,
+		Error:         fmt.Errorf("fallback failed and no resolver available"),
+		Reason:        "code conflicts remain after fallback, no resolver configured",
+		ConflictFiles: conflictFiles,
+	}
+}
