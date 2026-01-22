@@ -1,0 +1,394 @@
+// Package orchestrator manages the coordination of agents and workflows.
+package orchestrator
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"strings"
+	"time"
+
+	"github.com/ShayCichocki/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/learning"
+	"github.com/ShayCichocki/alphie/pkg/models"
+)
+
+// handleTaskCompletion processes a completed task and triggers merge if needed.
+// Returns a TaskOutcome indicating the final state of the task.
+func (o *Orchestrator) handleTaskCompletion(ctx context.Context, taskID string, result *agent.ExecutionResult, startTime time.Time) *TaskOutcome {
+	o.logger.Log("[handleTaskCompletion] processing completion for task %s, agent %s, success=%v", taskID, result.AgentID, result.Success)
+
+	task := o.graph.GetTask(taskID)
+	if task == nil {
+		return &TaskOutcome{
+			Status:   OutcomeFailed,
+			TaskID:   taskID,
+			AgentID:  result.AgentID,
+			Result:   result,
+			Error:    fmt.Errorf("task not found: %s", taskID),
+			Duration: time.Since(startTime),
+		}
+	}
+
+	// Unregister from collision checker
+	o.collision.UnregisterAgent(result.AgentID)
+
+	// Update scheduler - pass success so failed tasks don't unblock dependents
+	o.logger.Log("[handleTaskCompletion] calling scheduler.OnAgentComplete(%s, success=%v)", result.AgentID, result.Success)
+	o.scheduler.OnAgentComplete(result.AgentID, result.Success)
+	o.logger.Log("[handleTaskCompletion] scheduler.OnAgentComplete completed")
+
+	// Record task outcome for learning effectiveness tracking
+	// This is done early so we track all outcomes regardless of merge success
+	o.recordTaskOutcome(taskID, result)
+
+	// Check for clean abort condition: max iterations reached without passing verification
+	// This means the task failed to meet quality standards after all attempts
+	if result.Success && strings.Contains(result.LoopExitReason, "max_iterations_reached") && !result.IsVerified() {
+		o.handleAbortedTask(task, result)
+		return &TaskOutcome{
+			Status:   OutcomeAborted,
+			TaskID:   taskID,
+			AgentID:  result.AgentID,
+			Result:   result,
+			Error:    fmt.Errorf("aborted after %d iterations without passing verification", result.LoopIterations),
+			Duration: time.Since(startTime),
+		}
+	}
+
+	if result.Success {
+		mergeOutcome, err := o.handleSuccessfulTask(ctx, task, result)
+		if err != nil {
+			return &TaskOutcome{
+				Status:      OutcomeMergeFailed,
+				TaskID:      taskID,
+				AgentID:     result.AgentID,
+				Result:      result,
+				Error:       err,
+				Duration:    time.Since(startTime),
+				MergeResult: mergeOutcome,
+			}
+		}
+		return &TaskOutcome{
+			Status:      OutcomeSuccess,
+			TaskID:      taskID,
+			AgentID:     result.AgentID,
+			Result:      result,
+			Duration:    time.Since(startTime),
+			MergeResult: mergeOutcome,
+		}
+	}
+
+	o.handleFailedTask(task, result)
+	return &TaskOutcome{
+		Status:   OutcomeFailed,
+		TaskID:   taskID,
+		AgentID:  result.AgentID,
+		Result:   result,
+		Error:    fmt.Errorf("%s", result.Error),
+		Duration: time.Since(startTime),
+	}
+}
+
+// handleAbortedTask handles a task that was aborted due to max iterations without verification.
+func (o *Orchestrator) handleAbortedTask(task *models.Task, result *agent.ExecutionResult) {
+	o.logger.Log("[handleTaskCompletion] ABORT: task %s hit max iterations without passing verification", task.ID)
+
+	// Build detailed failure message
+	failureMsg := fmt.Sprintf("Task aborted: max iterations reached (%d) without passing verification. %s",
+		result.LoopIterations, result.VerifySummary)
+
+	// Mark task as failed
+	task.Status = models.TaskStatusFailed
+	task.Error = failureMsg
+	o.updateTaskState(task)
+	o.updateAgentState(result.AgentID, "failed")
+
+	// Update prog task status
+	o.progCoord.BlockTask(task.ID, failureMsg)
+
+	// Emit detailed failure event
+	o.emitEvent(OrchestratorEvent{
+		Type:      EventTaskFailed,
+		TaskID:    task.ID,
+		TaskTitle: task.Title,
+		ParentID:  task.ParentID,
+		AgentID:   result.AgentID,
+		Message:   failureMsg,
+		Error:     fmt.Errorf("verification failed after %d iterations", result.LoopIterations),
+		Timestamp: time.Now(),
+		LogFile:   result.LogFile,
+	})
+
+	// Don't merge - work is not trustworthy
+	// The worktree will be cleaned up by the executor
+}
+
+// handleSuccessfulTask handles a task that completed successfully.
+// Returns the merge outcome (if merge was performed) and any error.
+func (o *Orchestrator) handleSuccessfulTask(ctx context.Context, task *models.Task, result *agent.ExecutionResult) (*MergeOutcome, error) {
+	var mergeOutcome *MergeOutcome
+
+	// Merge agent branch FIRST (to session branch, or directly to main in greenfield mode)
+	// Only mark task complete after successful merge to ensure consistency
+	if o.merger != nil {
+		outcome, err := o.performMerge(ctx, task.ID, result)
+		mergeOutcome = outcome
+		if err != nil {
+			// Merge failed - emit failure event and return error
+			// Task should NOT be marked as complete
+			o.emitEvent(OrchestratorEvent{
+				Type:      EventTaskFailed,
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				ParentID:  task.ParentID,
+				AgentID:   result.AgentID,
+				Message:   fmt.Sprintf("Merge failed for task: %s", task.Title),
+				Error:     err,
+				Timestamp: time.Now(),
+			})
+			return mergeOutcome, fmt.Errorf("merge failed: %w", err)
+		}
+	}
+
+	// Mark task as done (only after successful merge)
+	task.Status = models.TaskStatusDone
+	now := time.Now()
+	task.CompletedAt = &now
+
+	// Update state persistence
+	o.updateTaskState(task)
+	o.updateAgentState(result.AgentID, "done")
+
+	// Reset override gate state for this task
+	if o.overrideGate != nil {
+		o.overrideGate.Reset(task.ID)
+	}
+
+	// Update prog task status to done
+	o.progCoord.CompleteTask(task.ID)
+
+	// Capture learnings from successful completion
+	o.learningCoord.CaptureOnCompletion(task, result)
+
+	// Emit completion event
+	o.emitEvent(OrchestratorEvent{
+		Type:      EventTaskCompleted,
+		TaskID:    task.ID,
+		TaskTitle: task.Title,
+		ParentID:  task.ParentID,
+		AgentID:   result.AgentID,
+		Message:   fmt.Sprintf("Completed task: %s", task.Title),
+		Timestamp: time.Now(),
+		LogFile:   result.LogFile,
+	})
+
+	return mergeOutcome, nil
+}
+
+// handleFailedTask handles a task that failed execution.
+func (o *Orchestrator) handleFailedTask(task *models.Task, result *agent.ExecutionResult) {
+	// Increment execution count - tracks total attempts across session recovery
+	task.ExecutionCount++
+
+	// Scout override gate: allow questions after N failed attempts
+	if o.overrideGate != nil && o.config.Tier == models.TierScout {
+		if o.overrideGate.CanAskQuestionWithCount(task.ExecutionCount) {
+			log.Printf("[orchestrator] task %s has %d failed attempts, Scout can now ask questions", task.ID, task.ExecutionCount)
+		}
+	}
+
+	// Mark task as failed
+	task.Status = models.TaskStatusFailed
+
+	// Update state persistence (includes ExecutionCount)
+	o.updateTaskState(task)
+	o.updateAgentState(result.AgentID, "failed")
+
+	// Check learnings for known fixes to this error
+	if o.learnings != nil && result.Error != "" {
+		learnings, err := o.learnings.OnFailure(result.Error)
+		if err != nil {
+			log.Printf("[orchestrator] warning: failed to check learnings for error: %v", err)
+		} else if len(learnings) > 0 {
+			log.Printf("[orchestrator] found %d learnings for error in task %s", len(learnings), task.ID)
+			// Include suggested fixes in the event message
+			var suggestions []string
+			for _, l := range learnings {
+				suggestions = append(suggestions, l.Action)
+			}
+			result.Error = fmt.Sprintf("%s (suggestions from learnings: %v)", result.Error, suggestions)
+		}
+	}
+
+	// Update prog task status to blocked with failure reason
+	o.progCoord.BlockTask(task.ID, result.Error)
+
+	// Emit failure event
+	o.emitEvent(OrchestratorEvent{
+		Type:      EventTaskFailed,
+		TaskID:    task.ID,
+		TaskTitle: task.Title,
+		ParentID:  task.ParentID,
+		AgentID:   result.AgentID,
+		Message:   fmt.Sprintf("Task failed: %s", task.Title),
+		Error:     fmt.Errorf("%s", result.Error),
+		Timestamp: time.Now(),
+		LogFile:   result.LogFile,
+	})
+}
+
+// performMerge attempts to merge the agent's work into the session branch.
+// Uses the merge queue for serialized, reliable merging with retry and fallback.
+// Returns the merge outcome and any error.
+func (o *Orchestrator) performMerge(ctx context.Context, taskID string, result *agent.ExecutionResult) (*MergeOutcome, error) {
+	// Log merge start to prog
+	o.progCoord.LogTask(taskID, "Starting merge operation (queued)")
+
+	// Construct agent branch name from the worktree
+	agentBranch := fmt.Sprintf("agent-%s", taskID)
+
+	// Enqueue the merge request - the queue handles all complexity
+	// (serialization, retry, semantic merge, fallback)
+	resultCh := o.mergeQueue.Enqueue(ctx, taskID, result.AgentID, agentBranch, result)
+
+	// Wait for the merge to complete
+	select {
+	case outcome := <-resultCh:
+		if outcome.Success {
+			// Log merge success to prog
+			msg := "Merge completed successfully"
+			if outcome.FallbackUsed {
+				msg = fmt.Sprintf("Merge completed with fallback: %s", outcome.Reason)
+			}
+			o.progCoord.LogTask(taskID, msg)
+
+			// Note: second review is handled by the merge queue if needed
+			return &outcome, nil
+		}
+
+		// Merge failed
+		o.progCoord.LogTask(taskID, fmt.Sprintf("Merge failed: %s", outcome.Reason))
+		return &outcome, fmt.Errorf("merge failed: %s: %w", outcome.Reason, outcome.Error)
+
+	case <-ctx.Done():
+		return nil, fmt.Errorf("merge cancelled: %w", ctx.Err())
+	}
+}
+
+// performSecondReview checks if a second review is needed and performs it.
+// Returns nil if no review is needed or the review approves the changes.
+// Returns an error if the review rejects the changes.
+func (o *Orchestrator) performSecondReview(ctx context.Context, taskID string, result *agent.ExecutionResult, diff string, changedFiles []string) error {
+	// Skip if second reviewer not configured
+	if o.secondReviewer == nil {
+		return nil
+	}
+
+	// Get the task for review context
+	task := o.graph.GetTask(taskID)
+	if task == nil {
+		return nil // Shouldn't happen, but don't block merge
+	}
+
+	// Check if second review is triggered
+	trigger := o.secondReviewer.ShouldSecondReview(diff, changedFiles, task)
+	if !trigger.Triggered {
+		return nil
+	}
+
+	// Emit second review started event
+	o.emitEvent(OrchestratorEvent{
+		Type:      EventSecondReviewStarted,
+		TaskID:    taskID,
+		AgentID:   result.AgentID,
+		Message:   fmt.Sprintf("Second review triggered: %s", strings.Join(trigger.Reasons, "; ")),
+		Timestamp: time.Now(),
+	})
+
+	log.Printf("[orchestrator] second review triggered for task %s: %v", taskID, trigger.Reasons)
+
+	// Request the review
+	reviewResult, err := o.secondReviewer.RequestReview(ctx, diff, task.Description)
+	if err != nil {
+		// Log the error but don't block the merge on review failure
+		log.Printf("[orchestrator] warning: second review failed for task %s: %v", taskID, err)
+		o.emitEvent(OrchestratorEvent{
+			Type:      EventSecondReviewCompleted,
+			TaskID:    taskID,
+			AgentID:   result.AgentID,
+			Message:   fmt.Sprintf("Second review failed: %v", err),
+			Error:     err,
+			Timestamp: time.Now(),
+		})
+		return nil // Don't block merge on review errors
+	}
+
+	// Process the review result
+	if reviewResult.Approved {
+		o.emitEvent(OrchestratorEvent{
+			Type:      EventSecondReviewCompleted,
+			TaskID:    taskID,
+			AgentID:   result.AgentID,
+			Message:   "Second review approved",
+			Timestamp: time.Now(),
+		})
+		return nil
+	}
+
+	// Review rejected - block the merge
+	concerns := strings.Join(reviewResult.Concerns, "; ")
+	if concerns == "" {
+		concerns = "no specific concerns provided"
+	}
+
+	o.emitEvent(OrchestratorEvent{
+		Type:      EventSecondReviewCompleted,
+		TaskID:    taskID,
+		AgentID:   result.AgentID,
+		Message:   fmt.Sprintf("Second review rejected: %s", concerns),
+		Error:     fmt.Errorf("second review rejected"),
+		Timestamp: time.Now(),
+	})
+
+	return fmt.Errorf("second review rejected: %s", concerns)
+}
+
+// recordTaskOutcome records the task outcome for learning effectiveness tracking.
+// This tracks which learnings were used and whether the task succeeded with verification.
+func (o *Orchestrator) recordTaskOutcome(taskID string, result *agent.ExecutionResult) {
+	// Skip if no effectiveness tracker configured
+	if o.effectivenessTracker == nil {
+		return
+	}
+
+	// Skip if no learnings were used
+	if len(result.LearningsUsed) == 0 {
+		return
+	}
+
+	// Determine outcome string
+	outcomeStr := "failure"
+	if result.Success {
+		outcomeStr = "success"
+	}
+
+	// Determine if verification passed
+	verificationPassed := result.IsVerified()
+
+	// Create task outcome
+	outcome := learning.TaskOutcome{
+		TaskID:             taskID,
+		SessionID:          o.config.SessionID,
+		Outcome:            outcomeStr,
+		VerificationPassed: verificationPassed,
+		LearningsUsed:      result.LearningsUsed,
+		CreatedAt:          time.Now(),
+	}
+
+	// Record the outcome
+	if err := o.effectivenessTracker.RecordOutcome(outcome); err != nil {
+		// Log but don't fail - effectiveness tracking is not critical
+		log.Printf("[orchestrator] warning: failed to record task outcome for effectiveness tracking: %v", err)
+	}
+}

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/shayc/alphie/internal/prog"
+	"github.com/ShayCichocki/alphie/internal/prog"
 )
 
 func setupTestDB(t *testing.T) (*prog.Client, func()) {

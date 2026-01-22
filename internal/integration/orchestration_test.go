@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shayc/alphie/internal/orchestrator"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/orchestrator"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // TestGraphBuildingFromTasks tests that tasks can be built into a dependency graph

@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/shayc/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/agent"
 )
 
 // Note: Feature and ArchSpec types are defined in auditor.go
@@ -69,7 +69,7 @@ Document to parse:
 
 // Parse extracts features from a markdown architecture document.
 // It reads the file at docPath and uses Claude to extract structured features.
-func (p *Parser) Parse(ctx context.Context, docPath string, claude *agent.ClaudeProcess) (*ArchSpec, error) {
+func (p *Parser) Parse(ctx context.Context, docPath string, claude agent.ClaudeRunner) (*ArchSpec, error) {
 	// Read the markdown document
 	content, err := os.ReadFile(docPath)
 	if err != nil {
@@ -179,7 +179,7 @@ func validateSpec(spec *ArchSpec) error {
 
 // ParseArchDoc is a convenience function that creates a Parser and parses a document.
 // This matches the interface specified in the task description.
-func ParseArchDoc(ctx context.Context, docPath string, claude *agent.ClaudeProcess) (*ArchSpec, error) {
+func ParseArchDoc(ctx context.Context, docPath string, claude agent.ClaudeRunner) (*ArchSpec, error) {
 	parser := NewParser()
 	return parser.Parse(ctx, docPath, claude)
 }

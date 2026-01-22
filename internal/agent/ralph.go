@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // DefaultThreshold is the default quality threshold for the self-critique loop.
@@ -190,15 +190,40 @@ func ThresholdForTier(tier models.Tier) int {
 }
 
 // MaxIterationsForTier returns the maximum Ralph loop iterations for a given tier.
+// Scout skips ralph-loop entirely (0 iterations), Builder gets 3, Architect gets 5.
 func MaxIterationsForTier(tier models.Tier) int {
 	switch tier {
 	case models.TierScout:
-		return 3
+		return 0 // Scout skips ralph-loop entirely
 	case models.TierBuilder:
-		return 5
+		return 3
 	case models.TierArchitect:
-		return 7
-	default:
 		return 5
+	default:
+		return 3
+	}
+}
+
+// GateConfigForTier returns the enabled quality gates for a given tier.
+// Scout: lint only (fast feedback)
+// Builder: build + lint + typecheck
+// Architect: build + test + lint + typecheck (full validation)
+type TierGateConfig struct {
+	Lint      bool
+	Build     bool
+	Test      bool
+	TypeCheck bool
+}
+
+func GateConfigForTier(tier models.Tier) TierGateConfig {
+	switch tier {
+	case models.TierScout:
+		return TierGateConfig{Lint: true}
+	case models.TierBuilder:
+		return TierGateConfig{Build: true, Lint: true, TypeCheck: true}
+	case models.TierArchitect:
+		return TierGateConfig{Build: true, Test: true, Lint: true, TypeCheck: true}
+	default:
+		return TierGateConfig{Build: true, Lint: true}
 	}
 }

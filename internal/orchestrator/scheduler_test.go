@@ -3,11 +3,12 @@ package orchestrator
 import (
 	"testing"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/graph"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestNewScheduler(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	scheduler := NewScheduler(graph, models.TierBuilder, 4)
 
 	if scheduler == nil {
@@ -24,7 +25,7 @@ func TestNewScheduler(t *testing.T) {
 }
 
 func TestSchedulerScheduleEmpty(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	scheduler := NewScheduler(graph, models.TierBuilder, 4)
 
 	// No tasks in graph
@@ -35,7 +36,7 @@ func TestSchedulerScheduleEmpty(t *testing.T) {
 }
 
 func TestSchedulerScheduleWithTasks(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	tasks := []*models.Task{
 		{ID: "task-1", Title: "Task 1", Status: models.TaskStatusPending},
 		{ID: "task-2", Title: "Task 2", Status: models.TaskStatusPending},
@@ -54,7 +55,7 @@ func TestSchedulerScheduleWithTasks(t *testing.T) {
 }
 
 func TestSchedulerMaxAgentsLimit(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	tasks := []*models.Task{
 		{ID: "task-1", Title: "Task 1", Status: models.TaskStatusPending},
 		{ID: "task-2", Title: "Task 2", Status: models.TaskStatusPending},
@@ -77,7 +78,7 @@ func TestSchedulerMaxAgentsLimit(t *testing.T) {
 }
 
 func TestSchedulerOnAgentStart(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	scheduler := NewScheduler(graph, models.TierBuilder, 4)
 
 	agent := &models.Agent{
@@ -95,7 +96,7 @@ func TestSchedulerOnAgentStart(t *testing.T) {
 }
 
 func TestSchedulerOnAgentComplete(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	tasks := []*models.Task{
 		{ID: "task-1", Title: "Task 1", Status: models.TaskStatusPending},
 	}
@@ -113,7 +114,7 @@ func TestSchedulerOnAgentComplete(t *testing.T) {
 	}
 
 	scheduler.OnAgentStart(agent)
-	scheduler.OnAgentComplete("agent-1")
+	scheduler.OnAgentComplete("agent-1", true)
 
 	count := scheduler.GetRunningCount()
 	if count != 0 {
@@ -122,7 +123,7 @@ func TestSchedulerOnAgentComplete(t *testing.T) {
 }
 
 func TestSchedulerGetRunningAgents(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	scheduler := NewScheduler(graph, models.TierBuilder, 4)
 
 	// Add some agents
@@ -142,7 +143,7 @@ func TestSchedulerGetRunningAgents(t *testing.T) {
 }
 
 func TestSchedulerSetCollisionChecker(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	scheduler := NewScheduler(graph, models.TierBuilder, 4)
 
 	cc := NewCollisionChecker()
@@ -152,7 +153,7 @@ func TestSchedulerSetCollisionChecker(t *testing.T) {
 }
 
 func TestSchedulerWithCollisionBlocking(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	tasks := []*models.Task{
 		{ID: "task-1", Title: "Work on internal/auth/", Description: "Update internal/auth/handler.go", Status: models.TaskStatusPending},
 		{ID: "task-2", Title: "Work on internal/auth/ too", Description: "Update internal/auth/config.go", Status: models.TaskStatusPending},
@@ -175,9 +176,7 @@ func TestSchedulerWithCollisionBlocking(t *testing.T) {
 	scheduler.OnAgentStart(agent)
 
 	// Register hints for the running agent
-	cc.RegisterAgent("agent-1", &SchedulerHint{
-		PathPrefixes: []string{"internal/auth/"},
-	})
+	cc.RegisterAgent("agent-1", []string{"internal/auth/"}, nil)
 
 	// task-2 should be blocked due to collision
 	ready := scheduler.Schedule()
@@ -189,7 +188,7 @@ func TestSchedulerWithCollisionBlocking(t *testing.T) {
 }
 
 func TestSchedulerSlotsExhausted(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	tasks := []*models.Task{
 		{ID: "task-1", Title: "Task 1", Status: models.TaskStatusPending},
 		{ID: "task-2", Title: "Task 2", Status: models.TaskStatusPending},
@@ -218,7 +217,7 @@ func TestSchedulerSlotsExhausted(t *testing.T) {
 }
 
 func TestSchedulerWithDependencies(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	tasks := []*models.Task{
 		{ID: "task-1", Title: "Task 1", Status: models.TaskStatusPending},
 		{ID: "task-2", Title: "Task 2", Status: models.TaskStatusPending, DependsOn: []string{"task-1"}},
@@ -243,7 +242,7 @@ func TestSchedulerWithDependencies(t *testing.T) {
 	// Start and complete task-1
 	agent := &models.Agent{ID: "agent-1", TaskID: "task-1", Status: models.AgentStatusRunning}
 	scheduler.OnAgentStart(agent)
-	scheduler.OnAgentComplete("agent-1")
+	scheduler.OnAgentComplete("agent-1", true)
 
 	// Now task-2 should be schedulable
 	ready = scheduler.Schedule()
@@ -256,7 +255,7 @@ func TestSchedulerWithDependencies(t *testing.T) {
 }
 
 func TestSchedulerSkipsAlreadyRunningTasks(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	tasks := []*models.Task{
 		{ID: "task-1", Title: "Task 1", Status: models.TaskStatusPending},
 		{ID: "task-2", Title: "Task 2", Status: models.TaskStatusPending},
@@ -283,11 +282,11 @@ func TestSchedulerSkipsAlreadyRunningTasks(t *testing.T) {
 }
 
 func TestSchedulerOnAgentCompleteUnknownAgent(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	scheduler := NewScheduler(graph, models.TierBuilder, 4)
 
 	// Completing unknown agent should not panic
-	scheduler.OnAgentComplete("non-existent-agent")
+	scheduler.OnAgentComplete("non-existent-agent", true)
 
 	// Running count should still be 0
 	if scheduler.GetRunningCount() != 0 {
@@ -296,7 +295,7 @@ func TestSchedulerOnAgentCompleteUnknownAgent(t *testing.T) {
 }
 
 func TestSchedulerCompleteUnlocksDownstream(t *testing.T) {
-	graph := NewDependencyGraph()
+	graph := graph.New()
 	tasks := []*models.Task{
 		{ID: "task-1", Title: "Task 1", Status: models.TaskStatusPending},
 		{ID: "task-2", Title: "Task 2", Status: models.TaskStatusPending, DependsOn: []string{"task-1"}},
@@ -312,7 +311,7 @@ func TestSchedulerCompleteUnlocksDownstream(t *testing.T) {
 	// Complete task-1 via agent
 	agent := &models.Agent{ID: "agent-1", TaskID: "task-1", Status: models.AgentStatusRunning}
 	scheduler.OnAgentStart(agent)
-	scheduler.OnAgentComplete("agent-1")
+	scheduler.OnAgentComplete("agent-1", true)
 
 	// Both task-2 and task-3 should now be ready
 	ready := scheduler.Schedule()
@@ -321,19 +320,57 @@ func TestSchedulerCompleteUnlocksDownstream(t *testing.T) {
 	}
 }
 
+func TestSchedulerFailedTaskDoesNotUnlockDependents(t *testing.T) {
+	g := graph.New()
+	task1 := &models.Task{ID: "task-1", Title: "Task 1", Status: models.TaskStatusPending}
+	tasks := []*models.Task{
+		task1,
+		{ID: "task-2", Title: "Task 2", Status: models.TaskStatusPending, DependsOn: []string{"task-1"}},
+		{ID: "task-3", Title: "Task 3", Status: models.TaskStatusPending, DependsOn: []string{"task-1"}},
+	}
+
+	if err := g.Build(tasks); err != nil {
+		t.Fatalf("failed to build graph: %v", err)
+	}
+
+	scheduler := NewScheduler(g, models.TierBuilder, 4)
+
+	// Fail task-1 via agent (success=false)
+	agent := &models.Agent{ID: "agent-1", TaskID: "task-1", Status: models.AgentStatusRunning}
+	scheduler.OnAgentStart(agent)
+	scheduler.OnAgentComplete("agent-1", false) // FAILED
+
+	// Simulate what orchestrator does: mark task as failed
+	task1.Status = models.TaskStatusFailed
+
+	// task-2 and task-3 should NOT be ready because task-1 failed
+	ready := scheduler.Schedule()
+	if len(ready) != 0 {
+		t.Errorf("expected 0 ready tasks after task-1 FAILED (dependents should stay blocked), got %d", len(ready))
+	}
+
+	// Verify task-1 is not in completed map (so it doesn't unblock dependents)
+	completedIDs := g.GetCompletedIDs()
+	for _, id := range completedIDs {
+		if id == "task-1" {
+			t.Error("failed task should not be marked as completed in graph")
+		}
+	}
+}
+
 func TestSchedulerWithNoCollisionChecker(t *testing.T) {
-	graph := NewDependencyGraph()
+	g := graph.New()
 	tasks := []*models.Task{
 		{ID: "task-1", Title: "Work on internal/auth/", Description: "Update internal/auth/handler.go", Status: models.TaskStatusPending},
 		{ID: "task-2", Title: "Work on internal/auth/ too", Description: "Update internal/auth/config.go", Status: models.TaskStatusPending},
 	}
 
-	if err := graph.Build(tasks); err != nil {
+	if err := g.Build(tasks); err != nil {
 		t.Fatalf("failed to build graph: %v", err)
 	}
 
 	// No collision checker set - should allow both tasks
-	scheduler := NewScheduler(graph, models.TierBuilder, 4)
+	scheduler := NewScheduler(g, models.TierBuilder, 4)
 
 	ready := scheduler.Schedule()
 	if len(ready) != 2 {

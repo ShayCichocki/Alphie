@@ -4,24 +4,11 @@ package orchestrator
 import (
 	"sync"
 
-	"github.com/shayc/alphie/internal/config"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/config"
+	"github.com/ShayCichocki/alphie/internal/orchestrator/policy"
+	"github.com/ShayCichocki/alphie/internal/protect"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
-
-// tierConfigsOrchestrator holds the loaded tier configurations for the orchestrator.
-// This is used by QuestionsAllowed to get tier-specific question limits.
-var tierConfigsOrchestrator *config.TierConfigs
-
-// tierConfigsOrchestratorMu protects tierConfigsOrchestrator from concurrent access.
-var tierConfigsOrchestratorMu sync.RWMutex
-
-// SetOrchestratorTierConfigs updates the tier configurations used by the orchestrator.
-// This should be called at startup after loading configs/*.yaml.
-func SetOrchestratorTierConfigs(configs *config.TierConfigs) {
-	tierConfigsOrchestratorMu.Lock()
-	defer tierConfigsOrchestratorMu.Unlock()
-	tierConfigsOrchestrator = configs
-}
 
 // ScoutOverrideGate manages conditions under which a Scout agent can ask questions.
 // By default, Scout agents have zero questions allowed, but this can be overridden
@@ -29,12 +16,12 @@ func SetOrchestratorTierConfigs(configs *config.TierConfigs) {
 //   - blocked_after_n_attempts: After N failed retries (default 5)
 //   - protected_area_detected: When the task touches protected code areas
 type ScoutOverrideGate struct {
-	// protected is the detector for protected code areas.
-	protected *ProtectedAreaDetector
-	// blockedAfterN is the number of failed attempts before allowing questions.
-	blockedAfterN int
-	// protectedAreaEnabled controls whether protected area detection allows questions.
-	protectedAreaEnabled bool
+	// protected is the checker for protected code areas.
+	protected *protect.Detector
+	// policy contains configurable override thresholds.
+	policy *policy.OverridePolicy
+	// tierConfigs provides tier-specific question limits.
+	tierConfigs *config.TierConfigs
 	// taskAttempts tracks the number of attempts per task.
 	taskAttempts map[string]int
 	// taskProtected tracks whether a task touches protected areas.
@@ -44,6 +31,7 @@ type ScoutOverrideGate struct {
 }
 
 // ScoutOverrideConfig contains configuration for the ScoutOverrideGate.
+// Deprecated: Use policy.OverridePolicy instead.
 type ScoutOverrideConfig struct {
 	// BlockedAfterNAttempts is the number of failed attempts before allowing questions.
 	// Default is 5.
@@ -55,25 +43,37 @@ type ScoutOverrideConfig struct {
 
 // DefaultScoutOverrideConfig returns the default configuration.
 func DefaultScoutOverrideConfig() ScoutOverrideConfig {
+	p := policy.Default().Override
 	return ScoutOverrideConfig{
-		BlockedAfterNAttempts: 5,
-		ProtectedAreaDetected: true,
+		BlockedAfterNAttempts: p.BlockedAfterNAttempts,
+		ProtectedAreaDetected: p.ProtectedAreaDetected,
 	}
 }
 
 // NewScoutOverrideGate creates a new ScoutOverrideGate with the given configuration.
-func NewScoutOverrideGate(protected *ProtectedAreaDetector, cfg ScoutOverrideConfig) *ScoutOverrideGate {
-	blockedAfterN := cfg.BlockedAfterNAttempts
-	if blockedAfterN <= 0 {
-		blockedAfterN = 5 // Default
+func NewScoutOverrideGate(protected *protect.Detector, cfg ScoutOverrideConfig) *ScoutOverrideGate {
+	p := &policy.OverridePolicy{
+		BlockedAfterNAttempts: cfg.BlockedAfterNAttempts,
+		ProtectedAreaDetected: cfg.ProtectedAreaDetected,
+	}
+	return NewScoutOverrideGateWithPolicy(protected, p, nil)
+}
+
+// NewScoutOverrideGateWithPolicy creates a new ScoutOverrideGate with policy and tier configs.
+func NewScoutOverrideGateWithPolicy(protected *protect.Detector, p *policy.OverridePolicy, tierCfg *config.TierConfigs) *ScoutOverrideGate {
+	if p == nil {
+		p = &policy.Default().Override
+	}
+	if p.BlockedAfterNAttempts <= 0 {
+		p.BlockedAfterNAttempts = 5
 	}
 
 	return &ScoutOverrideGate{
-		protected:            protected,
-		blockedAfterN:        blockedAfterN,
-		protectedAreaEnabled: cfg.ProtectedAreaDetected,
-		taskAttempts:         make(map[string]int),
-		taskProtected:        make(map[string]bool),
+		protected:     protected,
+		policy:        p,
+		tierConfigs:   tierCfg,
+		taskAttempts:  make(map[string]int),
+		taskProtected: make(map[string]bool),
 	}
 }
 
@@ -87,19 +87,26 @@ func (g *ScoutOverrideGate) CanAskQuestion(taskID string) bool {
 
 	// Check if blocked after N attempts
 	if attempts, ok := g.taskAttempts[taskID]; ok {
-		if attempts >= g.blockedAfterN {
+		if attempts >= g.policy.BlockedAfterNAttempts {
 			return true
 		}
 	}
 
 	// Check if protected area detected
-	if g.protectedAreaEnabled {
+	if g.policy.ProtectedAreaDetected {
 		if protected, ok := g.taskProtected[taskID]; ok && protected {
 			return true
 		}
 	}
 
 	return false
+}
+
+// CanAskQuestionWithCount checks if questions are allowed based on a provided
+// execution count. This is preferred over CanAskQuestion as it uses the
+// persisted Task.ExecutionCount instead of ephemeral in-memory tracking.
+func (g *ScoutOverrideGate) CanAskQuestionWithCount(executionCount int) bool {
+	return executionCount >= g.policy.BlockedAfterNAttempts
 }
 
 // RecordAttempt increments the attempt counter for a task.
@@ -161,13 +168,13 @@ func (g *ScoutOverrideGate) GetOverrideReason(taskID string) string {
 
 	// Check blocked after N
 	if attempts, ok := g.taskAttempts[taskID]; ok {
-		if attempts >= g.blockedAfterN {
+		if attempts >= g.policy.BlockedAfterNAttempts {
 			return "blocked_after_n_attempts"
 		}
 	}
 
 	// Check protected area
-	if g.protectedAreaEnabled {
+	if g.policy.ProtectedAreaDetected {
 		if protected, ok := g.taskProtected[taskID]; ok && protected {
 			return "protected_area_detected"
 		}
@@ -188,28 +195,34 @@ func (g *ScoutOverrideGate) Reset(taskID string) {
 
 // GetBlockedAfterN returns the configured blocked_after_n_attempts threshold.
 func (g *ScoutOverrideGate) GetBlockedAfterN() int {
-	return g.blockedAfterN
+	return g.policy.BlockedAfterNAttempts
 }
 
 // IsProtectedAreaEnabled returns whether protected area detection is enabled.
 func (g *ScoutOverrideGate) IsProtectedAreaEnabled() bool {
-	return g.protectedAreaEnabled
+	return g.policy.ProtectedAreaDetected
 }
 
 // QuestionsAllowed calculates the number of questions allowed for a tier and task.
 // For Scout tier, this is normally 0 but can be overridden by gate conditions.
 // For other tiers, it returns the standard allowance from loaded config.
 func QuestionsAllowed(tier models.Tier, gate *ScoutOverrideGate, taskID string) int {
-	// Get questions allowed from loaded config, with fallback defaults
-	tierConfigsOrchestratorMu.RLock()
-	cfg := tierConfigsOrchestrator
-	tierConfigsOrchestratorMu.RUnlock()
+	return QuestionsAllowedWithConfig(tier, gate, taskID, nil)
+}
+
+// QuestionsAllowedWithConfig calculates questions allowed with explicit tier config.
+// This is the preferred function as it doesn't rely on global state.
+func QuestionsAllowedWithConfig(tier models.Tier, gate *ScoutOverrideGate, taskID string, tierCfg *config.TierConfigs) int {
+	// Try to get tier config from gate if not provided
+	if tierCfg == nil && gate != nil && gate.tierConfigs != nil {
+		tierCfg = gate.tierConfigs
+	}
 
 	var questionsAllowed int
-	if cfg != nil {
-		tierCfg := cfg.Get(tier)
-		if tierCfg != nil {
-			questionsAllowed = tierCfg.GetQuestionsAllowedInt()
+	if tierCfg != nil {
+		tc := tierCfg.Get(tier)
+		if tc != nil {
+			questionsAllowed = tc.GetQuestionsAllowedInt()
 		} else {
 			questionsAllowed = getDefaultQuestionsAllowed(tier)
 		}

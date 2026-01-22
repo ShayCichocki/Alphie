@@ -113,3 +113,45 @@ func (l *LayoutManager) HeaderHeight() int {
 func (l *LayoutManager) SetHeaderHeight(height int) {
 	l.headerHeight = height
 }
+
+// CalculateMainTab returns dimensions for Tab 1 (Tasks + Agents only, no logs).
+// Layout: Tasks 40%, Agents 60%
+func (l *LayoutManager) CalculateMainTab(tabBarHeight int) PanelDimensions {
+	const minTasksWidth = 30
+
+	// Calculate proportional widths (40% Tasks, 60% Agents)
+	tasksWidth := l.totalWidth * 40 / 100
+	if tasksWidth < minTasksWidth {
+		tasksWidth = minTasksWidth
+	}
+	agentsWidth := l.totalWidth - tasksWidth
+
+	// Content height excluding header, footer, and tab bar
+	contentHeight := l.totalHeight - l.headerHeight - l.footerHeight - tabBarHeight
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+
+	return PanelDimensions{
+		TasksWidth:    tasksWidth,
+		AgentsWidth:   agentsWidth,
+		LogsWidth:     0, // Not used in Tab 1
+		ContentHeight: contentHeight,
+	}
+}
+
+// CalculateLogsTab returns dimensions for Tab 2 (full-screen logs).
+func (l *LayoutManager) CalculateLogsTab(tabBarHeight int) PanelDimensions {
+	// Content height excluding header, footer, and tab bar
+	contentHeight := l.totalHeight - l.headerHeight - l.footerHeight - tabBarHeight
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+
+	return PanelDimensions{
+		TasksWidth:    0,
+		AgentsWidth:   0,
+		LogsWidth:     l.totalWidth,
+		ContentHeight: contentHeight,
+	}
+}

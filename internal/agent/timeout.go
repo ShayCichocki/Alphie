@@ -4,8 +4,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shayc/alphie/internal/config"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/config"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // TimeoutAction represents the user's response to a timeout prompt.

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/shayc/alphie/internal/agent"
-	"github.com/shayc/alphie/internal/prog"
+	"github.com/ShayCichocki/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/prog"
 )
 
 // ResumableSession represents an in-progress session that can be resumed.

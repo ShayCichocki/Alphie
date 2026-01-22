@@ -7,7 +7,7 @@ import (
 
 func TestFailureAnalyzer_AnalyzeFailure_GoUndefined(t *testing.T) {
 	fa := NewFailureAnalyzer()
-	output := `# github.com/shayc/alphie/internal/agent
+	output := `# github.com/ShayCichocki/alphie/internal/agent
 internal/agent/executor.go:45:2: undefined: SomeFunction`
 	errorMsg := ""
 

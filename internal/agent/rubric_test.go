@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestParseScore_ValidResponse(t *testing.T) {

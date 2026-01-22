@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shayc/alphie/internal/prog"
+	"github.com/ShayCichocki/alphie/internal/prog"
 )
 
 func TestSessionResumeChecker_CheckForResumableSessions_NoSessions(t *testing.T) {

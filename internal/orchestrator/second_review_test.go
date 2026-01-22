@@ -4,11 +4,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/protect"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestNewSecondReviewer(t *testing.T) {
-	protected := NewProtectedAreaDetector()
+	protected := protect.New()
 	reviewer := NewSecondReviewer(protected, nil)
 
 	if reviewer == nil {
@@ -25,7 +26,7 @@ func TestNewSecondReviewer(t *testing.T) {
 }
 
 func TestReviewTrigger_ProtectedAreas(t *testing.T) {
-	protected := NewProtectedAreaDetector()
+	protected := protect.New()
 	reviewer := NewSecondReviewer(protected, nil)
 
 	task := &models.Task{
@@ -442,7 +443,7 @@ func TestBuildReviewPrompt(t *testing.T) {
 }
 
 func TestReviewTrigger_MultipleTriggers(t *testing.T) {
-	protected := NewProtectedAreaDetector()
+	protected := protect.New()
 	reviewer := NewSecondReviewer(protected, nil)
 
 	task := &models.Task{

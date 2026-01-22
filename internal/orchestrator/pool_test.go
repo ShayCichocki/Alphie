@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestNewOrchestratorPool(t *testing.T) {
@@ -244,15 +244,16 @@ func TestOrchestratorPool_Submit_ReturnsID(t *testing.T) {
 	// This test is limited because Submit requires a real executor
 	// which needs a real git repo. We'll just test the pool setup.
 	cfg := PoolConfig{
-		RepoPath: "/tmp/test",
+		RepoPath:      "/tmp/test",
+		RunnerFactory: testFactory(), // Required for Submit to work
 		// No executor - Submit will fail but we can test ID format
 	}
 
 	pool := NewOrchestratorPool(cfg)
 	defer pool.Stop()
 
-	// Submit will fail without executor, but the ID format is still generated
-	// before the failure
+	// Submit will still fail without executor, but the ID format is still generated
+	// before that failure (RunnerFactory check passes now)
 	id, _ := pool.Submit("test task", models.TierBuilder)
 
 	// ID should be 8 characters (UUID prefix)

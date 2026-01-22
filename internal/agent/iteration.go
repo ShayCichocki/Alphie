@@ -3,8 +3,8 @@ package agent
 import (
 	"sync"
 
-	"github.com/shayc/alphie/internal/config"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/config"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // IterationController tracks ralph-loop iterations per agent and enforces
@@ -29,6 +29,7 @@ type tierConfigInternal struct {
 // tierConfigs maps each tier to its configuration.
 // This can be updated by SetTierConfigs to use loaded YAML configurations.
 var tierConfigs = map[models.Tier]tierConfigInternal{
+	models.TierQuick:     {threshold: 5, maxIter: 0}, // Quick: no self-critique loop
 	models.TierScout:     {threshold: 5, maxIter: 3},
 	models.TierBuilder:   {threshold: 7, maxIter: 5},
 	models.TierArchitect: {threshold: 8, maxIter: 7},

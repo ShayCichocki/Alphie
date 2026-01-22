@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/shayc/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/agent"
 )
 
 // AuditStatus represents the implementation status of a feature.
@@ -93,7 +93,7 @@ func NewAuditor() *Auditor {
 
 // Audit compares parsed features against the codebase and returns a gap report.
 // It uses Claude to analyze each feature's implementation status.
-func (a *Auditor) Audit(ctx context.Context, spec *ArchSpec, repoPath string, claude *agent.ClaudeProcess) (*GapReport, error) {
+func (a *Auditor) Audit(ctx context.Context, spec *ArchSpec, repoPath string, claude agent.ClaudeRunner) (*GapReport, error) {
 	if spec == nil || len(spec.Features) == 0 {
 		return &GapReport{
 			Features: []FeatureStatus{},

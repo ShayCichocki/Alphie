@@ -8,19 +8,21 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/google/uuid"
 
-	"github.com/shayc/alphie/internal/agent"
-	"github.com/shayc/alphie/internal/config"
-	"github.com/shayc/alphie/internal/learning"
-	"github.com/shayc/alphie/internal/orchestrator"
-	"github.com/shayc/alphie/internal/prog"
-	"github.com/shayc/alphie/internal/state"
-	"github.com/shayc/alphie/internal/tui"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/config"
+	"github.com/ShayCichocki/alphie/internal/learning"
+	"github.com/ShayCichocki/alphie/internal/orchestrator"
+	"github.com/ShayCichocki/alphie/internal/prog"
+	"github.com/ShayCichocki/alphie/internal/state"
+	"github.com/ShayCichocki/alphie/internal/tui"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func runInteractive() error {
@@ -71,10 +73,29 @@ func runInteractive() error {
 		defer progClient.Close()
 	}
 
+	// Create worktree manager for cleanup
+	wtManager, err := agent.NewWorktreeManager("", repoPath)
+	if err != nil {
+		return fmt.Errorf("create worktree manager: %w", err)
+	}
+
+	// Startup cleanup: remove orphaned worktrees from previous interrupted sessions
+	activeSessions, _ := getActiveSessions() // Ignore errors, use empty list if query fails
+	if removed, err := wtManager.StartupCleanup(activeSessions); err == nil && removed > 0 {
+		log.Printf("[interactive] cleaned up %d orphaned worktree(s) from previous sessions", removed)
+	}
+
+	// Create runner factory for API calls
+	runnerFactory, err := createRunnerFactory()
+	if err != nil {
+		return fmt.Errorf("create runner factory: %w", err)
+	}
+
 	// Create executor (use sonnet as default model)
 	executor, err := agent.NewExecutor(agent.ExecutorConfig{
-		RepoPath: repoPath,
-		Model:    "sonnet",
+		RepoPath:      repoPath,
+		Model:         "sonnet",
+		RunnerFactory: runnerFactory,
 	})
 	if err != nil {
 		return fmt.Errorf("create executor: %w", err)
@@ -84,11 +105,12 @@ func runInteractive() error {
 	poolCfg := orchestrator.PoolConfig{
 		RepoPath:       repoPath,
 		TierConfigs:    tierConfigs,
-		Greenfield:     false,
+		Greenfield:     interactiveGreenfield,
 		Executor:       executor,
 		StateDB:        stateDB,
 		LearningSystem: learningSys,
 		ProgClient:     progClient,
+		RunnerFactory:  runnerFactory,
 	}
 
 	pool := orchestrator.NewOrchestratorPool(poolCfg)
@@ -116,41 +138,105 @@ func runInteractive() error {
 	program, app := tui.NewInteractiveProgram()
 
 	// Create quick executor for !quick tasks
-	quickExec := orchestrator.NewQuickExecutor(repoPath)
+	quickExec := orchestrator.NewQuickExecutor(repoPath, runnerFactory)
+
+	// Track active tasks to know when ALL are done
+	var activeTaskCount int32
 
 	// Set task submit handler (runs async to avoid blocking TUI)
 	app.SetTaskSubmitHandler(func(task string, tier models.Tier) {
+		// Generate task ID for tracking
+		taskID := uuid.New().String()[:8]
+
 		// Quick mode: single agent, no decomposition, direct execution
 		if tier == models.TierQuick {
+			atomic.AddInt32(&activeTaskCount, 1)
 			go func() {
+				defer atomic.AddInt32(&activeTaskCount, -1)
+
+				// Emit task_entered immediately for instant UI feedback
+				program.Send(tui.OrchestratorEventMsg{
+					Type:      "task_entered",
+					TaskID:    taskID,
+					TaskTitle: task,
+					Timestamp: time.Now(),
+				})
 				program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Quick: %s", task)})
 
 				result, err := quickExec.Execute(ctx, task)
 				if err != nil {
+					program.Send(tui.OrchestratorEventMsg{
+						Type:      "task_failed",
+						TaskID:    taskID,
+						TaskTitle: task,
+						Error:     err.Error(),
+						Timestamp: time.Now(),
+					})
 					program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Quick failed: %v", err)})
 					return
 				}
 
 				if !result.Success {
-					program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Quick failed: %s", result.Error)})
+					program.Send(tui.OrchestratorEventMsg{
+						Type:      "task_failed",
+						TaskID:    taskID,
+						TaskTitle: task,
+						Error:     result.Error,
+						Timestamp: time.Now(),
+						LogFile:   result.LogFile,
+					})
+					msg := fmt.Sprintf("Quick failed: %s", result.Error)
+					if result.LogFile != "" {
+						msg += fmt.Sprintf(" [log: %s]", result.LogFile)
+					}
+					program.Send(tui.DebugLogMsg{Message: msg})
 					return
 				}
 
-				program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Quick done! (%s, ~%d tokens, $%.4f)",
+				program.Send(tui.OrchestratorEventMsg{
+					Type:       "task_completed",
+					TaskID:     taskID,
+					TaskTitle:  task,
+					Timestamp:  time.Now(),
+					TokensUsed: result.TokensUsed,
+					Cost:       result.Cost,
+					LogFile:    result.LogFile,
+				})
+				msg := fmt.Sprintf("Quick done! (%s, ~%d tokens, $%.4f)",
 					result.Duration.Round(100*time.Millisecond),
 					result.TokensUsed,
-					result.Cost)})
+					result.Cost)
+				if result.LogFile != "" {
+					msg += fmt.Sprintf(" [log: %s]", result.LogFile)
+				}
+				program.Send(tui.DebugLogMsg{Message: msg})
 			}()
 			return
 		}
 
 		// Submit async to avoid blocking the TUI
+		atomic.AddInt32(&activeTaskCount, 1)
 		go func() {
+			// Emit task_entered immediately for instant UI feedback
+			program.Send(tui.OrchestratorEventMsg{
+				Type:      "task_entered",
+				TaskID:    taskID,
+				TaskTitle: task,
+				Timestamp: time.Now(),
+			})
 			program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Queuing: %s (tier: %s)", task, tier)})
 
-			_, err := pool.Submit(task, tier)
+			_, err := pool.SubmitWithID(task, tier, taskID)
 			if err != nil {
+				program.Send(tui.OrchestratorEventMsg{
+					Type:      "task_failed",
+					TaskID:    taskID,
+					TaskTitle: task,
+					Error:     err.Error(),
+					Timestamp: time.Now(),
+				})
 				program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Failed to submit task: %v", err)})
+				atomic.AddInt32(&activeTaskCount, -1)
 				return
 			}
 
@@ -158,8 +244,25 @@ func runInteractive() error {
 		}()
 	})
 
+	// Set task retry handler
+	app.SetTaskRetryHandler(func(taskID, taskTitle string, tier models.Tier) {
+		atomic.AddInt32(&activeTaskCount, 1)
+		go func() {
+			program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Retrying: %s", taskTitle)})
+
+			_, err := pool.Submit(taskTitle, tier)
+			if err != nil {
+				program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Failed to retry task: %v", err)})
+				atomic.AddInt32(&activeTaskCount, -1)
+				return
+			}
+
+			program.Send(tui.DebugLogMsg{Message: fmt.Sprintf("Retry started: %s", taskTitle)})
+		}()
+	})
+
 	// Forward events from pool to TUI
-	go forwardPoolEventsToTUI(ctx, pool, program)
+	go forwardPoolEventsToTUI(ctx, pool, program, &activeTaskCount)
 
 	// If resume flag is set, load and submit incomplete tasks
 	if interactiveResume && progClient != nil {
@@ -175,6 +278,12 @@ func runInteractive() error {
 	// Stop pool on exit
 	if err := pool.Stop(); err != nil {
 		log.Printf("[interactive] warning: failed to stop pool: %v", err)
+	}
+
+	// Final cleanup: ensure all worktrees are cleaned up on exit
+	activeSessions, _ = getActiveSessions()
+	if removed, err := wtManager.CleanupOrphans(activeSessions, nil); err == nil && removed > 0 {
+		log.Printf("[interactive] cleaned up %d worktree(s) on exit", removed)
 	}
 
 	return nil
@@ -216,7 +325,7 @@ func resumeIncompleteTasks(program *tea.Program, pool *orchestrator.Orchestrator
 	}
 }
 
-func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.OrchestratorPool, program *tea.Program) {
+func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.OrchestratorPool, program *tea.Program, activeTaskCount *int32) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -226,16 +335,25 @@ func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.Orchestrator
 				return
 			}
 
+			// Skip session_done events in interactive mode - users can keep submitting tasks
+			if event.Type == orchestrator.EventSessionDone {
+				continue
+			}
+
 			msg := tui.OrchestratorEventMsg{
-				Type:       string(event.Type),
-				TaskID:     event.TaskID,
-				TaskTitle:  event.TaskTitle,
-				AgentID:    event.AgentID,
-				Message:    event.Message,
-				Timestamp:  event.Timestamp,
-				TokensUsed: event.TokensUsed,
-				Cost:       event.Cost,
-				Duration:   event.Duration,
+				Type:           string(event.Type),
+				TaskID:         event.TaskID,
+				TaskTitle:      event.TaskTitle,
+				ParentID:       event.ParentID,
+				AgentID:        event.AgentID,
+				Message:        event.Message,
+				Timestamp:      event.Timestamp,
+				TokensUsed:     event.TokensUsed,
+				Cost:           event.Cost,
+				Duration:       event.Duration,
+				LogFile:        event.LogFile,
+				CurrentAction:  event.CurrentAction,
+				OriginalTaskID: event.OriginalTaskID,
 			}
 			if event.Error != nil {
 				msg.Error = event.Error.Error()
@@ -243,13 +361,9 @@ func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.Orchestrator
 
 			program.Send(msg)
 
-			// Handle session done
-			if event.Type == orchestrator.EventSessionDone {
-				success := event.Error == nil
-				program.Send(tui.SessionDoneMsg{
-					Success: success,
-					Message: event.Message,
-				})
+			// Track task completion
+			if event.Type == orchestrator.EventTaskCompleted || event.Type == orchestrator.EventTaskFailed {
+				atomic.AddInt32(activeTaskCount, -1)
 			}
 		}
 	}

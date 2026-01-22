@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/shayc/alphie/internal/config"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/config"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestModelForTier(t *testing.T) {

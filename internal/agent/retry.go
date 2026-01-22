@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shayc/alphie/internal/learning"
+	"github.com/ShayCichocki/alphie/internal/learning"
 )
 
 // RetryDecision represents the decision after evaluating a failure.

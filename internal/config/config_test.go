@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestDefault(t *testing.T) {

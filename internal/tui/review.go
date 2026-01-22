@@ -7,8 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/shayc/alphie/internal/orchestrator"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // ReviewRequestMsg is sent when an agent's task completes and requires human review.
@@ -31,11 +30,6 @@ type ReviewResult struct {
 	Reason   string
 }
 
-// ApprovalRequestMsg wraps an orchestrator.ApprovalRequest for the TUI.
-// This message triggers the review gate to display the diff and wait for approval.
-type ApprovalRequestMsg struct {
-	Request orchestrator.ApprovalRequest
-}
 
 // ReviewGate displays a diff for human review and prompts for approval.
 type ReviewGate struct {
@@ -61,8 +55,6 @@ type ReviewGate struct {
 	scrollOffset int
 	// diffLines is the parsed diff split into lines.
 	diffLines []string
-	// approvalManager handles approval state and blocking.
-	approvalManager *orchestrator.ApprovalManager
 
 	// Styles for diff rendering.
 	addStyle    lipgloss.Style
@@ -125,17 +117,6 @@ func (r *ReviewGate) Update(msg tea.Msg) (*ReviewGate, tea.Cmd) {
 		case "y", "Y":
 			r.active = false
 			agentID := r.agentID
-			taskID := r.taskID
-
-			// Submit approval to the ApprovalManager if connected
-			if r.approvalManager != nil && taskID != "" {
-				r.approvalManager.SubmitResponse(orchestrator.ApprovalResponse{
-					TaskID:   taskID,
-					Approved: true,
-					Reason:   "",
-				})
-			}
-
 			r.reset()
 			return r, func() tea.Msg {
 				return ReviewResponseMsg{
@@ -148,17 +129,6 @@ func (r *ReviewGate) Update(msg tea.Msg) (*ReviewGate, tea.Cmd) {
 		case "n", "N":
 			r.active = false
 			agentID := r.agentID
-			taskID := r.taskID
-
-			// Submit rejection to the ApprovalManager if connected
-			if r.approvalManager != nil && taskID != "" {
-				r.approvalManager.SubmitResponse(orchestrator.ApprovalResponse{
-					TaskID:   taskID,
-					Approved: false,
-					Reason:   "rejected by human reviewer",
-				})
-			}
-
 			r.reset()
 			return r, func() tea.Msg {
 				return ReviewResponseMsg{
@@ -191,17 +161,6 @@ func (r *ReviewGate) Update(msg tea.Msg) (*ReviewGate, tea.Cmd) {
 		r.diff = msg.Diff
 		r.taskDescription = msg.TaskDescription
 		r.diffLines = strings.Split(msg.Diff, "\n")
-		r.scrollOffset = 0
-		r.active = true
-
-	case ApprovalRequestMsg:
-		// Handle approval request from orchestrator
-		r.agentID = msg.Request.AgentID
-		r.taskID = msg.Request.TaskID
-		r.diff = msg.Request.Diff
-		r.taskDescription = msg.Request.TaskDescription
-		r.baseCommit = msg.Request.BaseCommit
-		r.diffLines = strings.Split(msg.Request.Diff, "\n")
 		r.scrollOffset = 0
 		r.active = true
 	}
@@ -400,12 +359,6 @@ func (r *ReviewGate) reset() {
 	r.baseCommit = ""
 	r.diffLines = make([]string, 0)
 	r.scrollOffset = 0
-}
-
-// SetApprovalManager sets the approval manager for blocking approval flow.
-// When set, approve/reject commands will submit responses to the manager.
-func (r *ReviewGate) SetApprovalManager(m *orchestrator.ApprovalManager) {
-	r.approvalManager = m
 }
 
 // GetTaskID returns the ID of the task being reviewed.

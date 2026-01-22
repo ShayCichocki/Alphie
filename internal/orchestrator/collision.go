@@ -5,14 +5,17 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/graph"
+	"github.com/ShayCichocki/alphie/internal/merge"
+	"github.com/ShayCichocki/alphie/internal/orchestrator/policy"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // SchedulerHint provides hints to the collision checker about an agent's working area.
 type SchedulerHint struct {
 	// PathPrefixes are the directory prefixes the agent is working in (e.g., ["src/auth/", "src/api/"]).
 	PathPrefixes []string
-	// Hotspots are files that have been touched frequently (>3x) during the session.
+	// Hotspots are files that have been touched frequently during the session.
 	Hotspots []string
 }
 
@@ -20,8 +23,12 @@ type SchedulerHint struct {
 // It ensures:
 // - No concurrent tasks on the same path prefix
 // - Serialized access to hotspot files
-// - Maximum 2 agents on the same top-level directory
+// - Limited agents on the same top-level directory
 type CollisionChecker struct {
+	// collisionPolicy contains configurable collision thresholds.
+	collisionPolicy *policy.CollisionPolicy
+	// schedulingPolicy contains configurable scheduling patterns.
+	schedulingPolicy *policy.SchedulingPolicy
 	// hints maps agent IDs to their scheduler hints.
 	hints map[string]*SchedulerHint
 	// hotspots maps file paths to their touch counts.
@@ -30,25 +37,39 @@ type CollisionChecker struct {
 	mu sync.RWMutex
 }
 
-// hotspotThreshold is the number of touches after which a file is considered a hotspot.
-const hotspotThreshold = 3
-
-// maxAgentsPerTopLevel is the maximum number of agents allowed in the same top-level directory.
-const maxAgentsPerTopLevel = 2
-
-// NewCollisionChecker creates a new CollisionChecker instance.
+// NewCollisionChecker creates a new CollisionChecker with default policy.
 func NewCollisionChecker() *CollisionChecker {
+	cfg := policy.Default()
+	return NewCollisionCheckerWithPolicy(&cfg.Collision, &cfg.Scheduling)
+}
+
+// NewCollisionCheckerWithPolicy creates a new CollisionChecker with custom policy.
+func NewCollisionCheckerWithPolicy(cp *policy.CollisionPolicy, sp *policy.SchedulingPolicy) *CollisionChecker {
+	cfg := policy.Default()
+	if cp == nil {
+		cp = &cfg.Collision
+	}
+	if sp == nil {
+		sp = &cfg.Scheduling
+	}
 	return &CollisionChecker{
-		hints:    make(map[string]*SchedulerHint),
-		hotspots: make(map[string]int),
+		collisionPolicy:  cp,
+		schedulingPolicy: sp,
+		hints:            make(map[string]*SchedulerHint),
+		hotspots:         make(map[string]int),
 	}
 }
 
-// RegisterAgent registers an agent with its scheduler hints.
-func (c *CollisionChecker) RegisterAgent(agentID string, hints *SchedulerHint) {
+// --- Registration ---
+
+// RegisterAgent registers an agent with path prefixes and hotspots it may touch.
+func (c *CollisionChecker) RegisterAgent(agentID string, pathPrefixes, hotspots []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.hints[agentID] = hints
+	c.hints[agentID] = &SchedulerHint{
+		PathPrefixes: pathPrefixes,
+		Hotspots:     hotspots,
+	}
 }
 
 // UnregisterAgent removes an agent from tracking.
@@ -58,41 +79,7 @@ func (c *CollisionChecker) UnregisterAgent(agentID string) {
 	delete(c.hints, agentID)
 }
 
-// RecordTouch increments the touch count for a file path.
-// When a file is touched more than hotspotThreshold times, it becomes a hotspot.
-func (c *CollisionChecker) RecordTouch(agentID, filePath string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.hotspots[filePath]++
-
-	// Update the agent's hints if the file became a hotspot.
-	if c.hotspots[filePath] > hotspotThreshold {
-		if hints, ok := c.hints[agentID]; ok {
-			// Check if already in hotspots.
-			for _, h := range hints.Hotspots {
-				if h == filePath {
-					return
-				}
-			}
-			hints.Hotspots = append(hints.Hotspots, filePath)
-		}
-	}
-}
-
-// GetHotspots returns all files that have been touched more than hotspotThreshold times.
-func (c *CollisionChecker) GetHotspots() []string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	var result []string
-	for path, count := range c.hotspots {
-		if count > hotspotThreshold {
-			result = append(result, path)
-		}
-	}
-	return result
-}
+// --- Scheduling ---
 
 // CanSchedule determines if a task can be scheduled given the current running agents.
 // It checks for:
@@ -104,7 +91,7 @@ func (c *CollisionChecker) CanSchedule(task *models.Task, currentAgents []*model
 	defer c.mu.RUnlock()
 
 	// Get task path prefixes from description or infer from task ID.
-	taskPrefixes := c.extractPathPrefixes(task)
+	taskPrefixes := c.ExtractPathPrefixes(task)
 	if len(taskPrefixes) == 0 {
 		// No path information available, allow scheduling.
 		return true
@@ -140,15 +127,22 @@ func (c *CollisionChecker) CanSchedule(task *models.Task, currentAgents []*model
 	return true
 }
 
-// extractPathPrefixes extracts path prefixes from a task.
-// It looks for common path patterns in the task description.
-func (c *CollisionChecker) extractPathPrefixes(task *models.Task) []string {
-	// Look for paths in the task description.
+// ExtractPathPrefixes extracts path prefixes from a task.
+// It prefers explicit FileBoundaries if present, otherwise falls back to
+// parsing common path patterns from the task description.
+func (c *CollisionChecker) ExtractPathPrefixes(task *models.Task) []string {
+	// Prefer explicit FileBoundaries if set (from decomposer)
+	if len(task.FileBoundaries) > 0 {
+		return task.FileBoundaries
+	}
+
+	// Fall back to extracting paths from description for backwards compatibility
 	var prefixes []string
 
-	// Common path indicators.
+	// Common path indicators for various project structures.
 	pathIndicators := []string{
 		"internal/", "pkg/", "cmd/", "src/", "lib/", "test/", "tests/",
+		"server/", "client/", "backend/", "frontend/", "api/", "web/", "app/",
 	}
 
 	desc := task.Description + " " + task.Title
@@ -180,6 +174,141 @@ func (c *CollisionChecker) extractPathPrefixes(task *models.Task) []string {
 
 	return prefixes
 }
+
+// MightTouchRoot checks if a task might modify root-level files based on its description.
+// This is used in greenfield mode to serialize tasks that might conflict on package.json, etc.
+func (c *CollisionChecker) MightTouchRoot(task *models.Task) bool {
+	// Check if file boundaries explicitly include critical config files
+	for _, boundary := range task.FileBoundaries {
+		// Use the merge package's critical file detection for consistency
+		if merge.IsCriticalFile(boundary) {
+			return true
+		}
+		// Also check root-level files (no directory separator)
+		if !strings.Contains(boundary, "/") {
+			return true
+		}
+	}
+
+	// Check description for root-touching keywords
+	desc := strings.ToLower(task.Description + " " + task.Title)
+	for _, pattern := range c.schedulingPolicy.RootTouchingPatterns {
+		if strings.Contains(desc, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// GetCriticalFileBoundaries returns the critical config files from a task's file boundaries.
+// These are files that should trigger serialization (package.json, go.mod, Cargo.toml, etc.)
+func (c *CollisionChecker) GetCriticalFileBoundaries(task *models.Task) []string {
+	var critical []string
+	for _, boundary := range task.FileBoundaries {
+		if merge.IsCriticalFile(boundary) {
+			critical = append(critical, boundary)
+		}
+	}
+	return critical
+}
+
+// HasCriticalFileConflict checks if a task's critical files conflict with a running agent's.
+// This is more specific than MightTouchRoot - it checks for EXACT file overlaps.
+func (c *CollisionChecker) HasCriticalFileConflict(task *models.Task, runningAgents []*models.Agent, graph *graph.DependencyGraph) bool {
+	taskCritical := c.GetCriticalFileBoundaries(task)
+	if len(taskCritical) == 0 {
+		return false
+	}
+
+	taskCriticalSet := make(map[string]bool)
+	for _, f := range taskCritical {
+		taskCriticalSet[f] = true
+	}
+
+	// Check if any running agent touches the same critical files
+	for _, agent := range runningAgents {
+		if agent.Status != models.AgentStatusRunning {
+			continue
+		}
+
+		runningTask := graph.GetTask(agent.TaskID)
+		if runningTask == nil {
+			continue
+		}
+
+		for _, boundary := range runningTask.FileBoundaries {
+			if taskCriticalSet[boundary] {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// HasRootTouchingConflict checks if a task would conflict with a running agent
+// that might also touch root files. Used in greenfield mode.
+func (c *CollisionChecker) HasRootTouchingConflict(task *models.Task, runningAgents []*models.Agent, graph *graph.DependencyGraph) bool {
+	// If this task doesn't touch root, no conflict
+	if !c.MightTouchRoot(task) {
+		return false
+	}
+
+	// Check if any running agent also touches root
+	for _, agent := range runningAgents {
+		if agent.Status != models.AgentStatusRunning {
+			continue
+		}
+
+		runningTask := graph.GetTask(agent.TaskID)
+		if runningTask != nil && c.MightTouchRoot(runningTask) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// --- Hotspot Tracking ---
+
+// RecordTouch increments the touch count for a file path.
+// When a file is touched more than the hotspot threshold, it becomes a hotspot.
+func (c *CollisionChecker) RecordTouch(agentID, filePath string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.hotspots[filePath]++
+
+	// Update the agent's hints if the file became a hotspot.
+	if c.hotspots[filePath] > c.collisionPolicy.HotspotThreshold {
+		if hints, ok := c.hints[agentID]; ok {
+			// Check if already in hotspots.
+			for _, h := range hints.Hotspots {
+				if h == filePath {
+					return
+				}
+			}
+			hints.Hotspots = append(hints.Hotspots, filePath)
+		}
+	}
+}
+
+// GetHotspots returns all files that have been touched more than the hotspot threshold.
+func (c *CollisionChecker) GetHotspots() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var result []string
+	for path, count := range c.hotspots {
+		if count > c.collisionPolicy.HotspotThreshold {
+			result = append(result, path)
+		}
+	}
+	return result
+}
+
+// --- Internal Helpers ---
 
 // hasPathPrefixCollision checks if any task prefix overlaps with agent prefixes.
 func (c *CollisionChecker) hasPathPrefixCollision(taskPrefixes, agentPrefixes []string) bool {
@@ -234,7 +363,7 @@ func (c *CollisionChecker) checkTopLevelLimit(taskPrefixes []string, currentAgen
 	for _, prefix := range taskPrefixes {
 		topLevel := c.getTopLevelDir(prefix)
 		if topLevel != "" {
-			if topLevelCounts[topLevel] >= maxAgentsPerTopLevel {
+			if topLevelCounts[topLevel] >= c.collisionPolicy.MaxAgentsPerTopLevel {
 				return false
 			}
 		}

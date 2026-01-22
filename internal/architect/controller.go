@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shayc/alphie/internal/agent"
-	"github.com/shayc/alphie/internal/prog"
+	"github.com/ShayCichocki/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/prog"
 )
 
 // ProgressPhase represents the current phase of the implementation loop.
@@ -92,6 +92,9 @@ type Controller struct {
 	progClient *prog.Client
 	// onProgress is called when progress events occur.
 	onProgress ProgressCallback
+	// runnerFactory creates ClaudeRunner instances.
+	// If nil, falls back to creating ClaudeProcess (legacy).
+	runnerFactory agent.ClaudeRunnerFactory
 }
 
 // ControllerOption is a functional option for configuring a Controller.
@@ -123,6 +126,22 @@ func WithProgressCallback(cb ProgressCallback) ControllerOption {
 	return func(c *Controller) {
 		c.onProgress = cb
 	}
+}
+
+// WithRunnerFactory sets the factory for creating ClaudeRunner instances.
+func WithRunnerFactory(factory agent.ClaudeRunnerFactory) ControllerOption {
+	return func(c *Controller) {
+		c.runnerFactory = factory
+	}
+}
+
+// createRunner creates a new ClaudeRunner using the factory.
+// The factory must be set via WithRunnerFactory option.
+func (c *Controller) createRunner(ctx context.Context) agent.ClaudeRunner {
+	if c.runnerFactory == nil {
+		panic("Controller: runnerFactory is required - use WithRunnerFactory option")
+	}
+	return c.runnerFactory.NewRunner()
 }
 
 // emitProgress sends a progress event if a callback is set.
@@ -228,7 +247,7 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 			Message:   "Parsing architecture document...",
 		})
 
-		claude := agent.NewClaudeProcess(ctx)
+		claude := c.createRunner(ctx)
 		spec, err := c.parser.Parse(ctx, archDoc, claude)
 		if err != nil {
 			return fmt.Errorf("parse architecture doc (iteration %d): %w", iteration, err)
@@ -243,7 +262,7 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 			Message:       fmt.Sprintf("Auditing codebase against %d features...", len(spec.Features)),
 		})
 
-		auditClaude := agent.NewClaudeProcess(ctx)
+		auditClaude := c.createRunner(ctx)
 		gapReport, err := c.auditor.Audit(ctx, spec, c.RepoPath, auditClaude)
 		if err != nil {
 			return fmt.Errorf("audit codebase (iteration %d): %w", iteration, err)

@@ -1,9 +1,11 @@
 package orchestrator
 
 import (
+	"fmt"
 	"sync"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/graph"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // Scheduler coordinates the scheduling of ready tasks to available agent slots.
@@ -11,7 +13,7 @@ import (
 // concurrent modifications to the same files or directories.
 type Scheduler struct {
 	// graph is the dependency graph of tasks.
-	graph *DependencyGraph
+	graph *graph.DependencyGraph
 	// tier is the agent tier for this scheduler.
 	tier models.Tier
 	// running maps agent IDs to their agent instances.
@@ -20,12 +22,15 @@ type Scheduler struct {
 	maxAgents int
 	// collision is the collision checker for avoiding file conflicts.
 	collision *CollisionChecker
+	// greenfield indicates whether this is a greenfield project.
+	// In greenfield mode, tasks that might touch root files are serialized.
+	greenfield bool
 	// mu protects all mutable fields.
 	mu sync.RWMutex
 }
 
 // NewScheduler creates a new Scheduler with the given dependency graph, tier, and max agents limit.
-func NewScheduler(graph *DependencyGraph, tier models.Tier, maxAgents int) *Scheduler {
+func NewScheduler(graph *graph.DependencyGraph, tier models.Tier, maxAgents int) *Scheduler {
 	return &Scheduler{
 		graph:     graph,
 		tier:      tier,
@@ -42,6 +47,13 @@ func (s *Scheduler) SetCollisionChecker(cc *CollisionChecker) {
 	s.collision = cc
 }
 
+// SetGreenfield enables greenfield mode, which serializes tasks that might touch root files.
+func (s *Scheduler) SetGreenfield(greenfield bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.greenfield = greenfield
+}
+
 // Schedule returns a slice of tasks that are ready to be scheduled.
 // It considers:
 // - Tasks with no unmet dependencies (from the graph)
@@ -54,12 +66,16 @@ func (s *Scheduler) Schedule() []*models.Task {
 	// Calculate available slots.
 	availableSlots := s.maxAgents - len(s.running)
 	if availableSlots <= 0 {
+		debugLog("[scheduler] no available slots: maxAgents=%d, running=%d", s.maxAgents, len(s.running))
 		return nil
 	}
 
 	// Get ready task IDs from the dependency graph.
 	readyIDs := s.graph.GetReady()
+	debugLog("[scheduler] graph.GetReady() returned %d tasks: %v", len(readyIDs), readyIDs)
 	if len(readyIDs) == 0 {
+		// Log graph state for debugging
+		debugLog("[scheduler] graph has %d total tasks, completed: %v", s.graph.Size(), s.graph.GetCompletedIDs())
 		return nil
 	}
 
@@ -88,18 +104,117 @@ func (s *Scheduler) Schedule() []*models.Task {
 		return nil
 	}
 
-	// Filter by collision avoidance if a checker is set.
+	// Get running agents for collision and SETUP checks.
+	runningAgents := s.getRunningAgentsLocked()
+
+	// Layer 1: SETUP tasks must be sequential.
+	// Check if any running agent is working on a SETUP task.
+	setupRunning := false
+	for _, agent := range runningAgents {
+		task := s.graph.GetTask(agent.TaskID)
+		if task != nil && task.TaskType == models.TaskTypeSetup {
+			setupRunning = true
+			debugLog("[scheduler] SETUP task %s is running, will serialize other SETUP tasks", task.ID)
+			break
+		}
+	}
+
+	// Filter by SETUP serialization, critical file conflicts, greenfield root-touching, and collision avoidance.
 	var schedulable []*models.Task
-	if s.collision != nil {
-		runningAgents := s.getRunningAgentsLocked()
-		for _, task := range candidates {
-			if s.collision.CanSchedule(task, runningAgents) {
-				schedulable = append(schedulable, task)
+
+	// Track root-touching tasks we're scheduling in this batch (for greenfield serialization)
+	schedulingRootTouching := false
+	// Track critical files being touched by tasks in this batch (for all modes)
+	schedulingCriticalFiles := make(map[string]bool)
+	// Track skip reasons for logging
+	skipReasons := make(map[string]string)
+
+	for _, task := range candidates {
+		// Layer 1: Skip SETUP tasks if one is already running.
+		if task.TaskType == models.TaskTypeSetup && setupRunning {
+			debugLog("[scheduler] Layer 1: Skipping SETUP task %s (%s) - another SETUP is running", task.ID, task.Title)
+			skipReasons[task.ID] = "Layer 1: SETUP serialization"
+			continue
+		}
+
+		// Layer 2: Critical file conflict check (applies in ALL modes).
+		// Tasks touching the same critical config files (package.json, go.mod, etc.) must be serialized.
+		if s.collision != nil {
+			// Check against running agents
+			if s.collision.HasCriticalFileConflict(task, runningAgents, s.graph) {
+				criticalFiles := s.collision.GetCriticalFileBoundaries(task)
+				debugLog("[scheduler] Layer 2: Skipping task %s (%s) - critical file conflict: %v", task.ID, task.Title, criticalFiles)
+				skipReasons[task.ID] = fmt.Sprintf("Layer 2: Critical file conflict on %v", criticalFiles)
+				continue
+			}
+
+			// Check against tasks we're scheduling in THIS batch
+			taskCritical := s.collision.GetCriticalFileBoundaries(task)
+			conflictInBatch := false
+			var conflictingFile string
+			for _, f := range taskCritical {
+				if schedulingCriticalFiles[f] {
+					debugLog("[scheduler] Layer 2: Skipping task %s (%s) - critical file %s already claimed in this batch", task.ID, task.Title, f)
+					conflictingFile = f
+					conflictInBatch = true
+					break
+				}
+			}
+			if conflictInBatch {
+				skipReasons[task.ID] = fmt.Sprintf("Layer 2: Critical file %s claimed in batch", conflictingFile)
+				continue
+			}
+			// Mark these critical files as claimed
+			for _, f := range taskCritical {
+				schedulingCriticalFiles[f] = true
 			}
 		}
-	} else {
-		schedulable = candidates
+
+		// Layer 3: In greenfield mode, also serialize tasks that might touch root files.
+		// This is broader than critical file check - includes any root-level files.
+		if s.greenfield && s.collision != nil {
+			taskTouchesRoot := s.collision.MightTouchRoot(task)
+
+			// Check against running agents
+			if s.collision.HasRootTouchingConflict(task, runningAgents, s.graph) {
+				debugLog("[scheduler] Layer 3: Skipping task %s (%s) - greenfield root-touching conflict with running agent", task.ID, task.Title)
+				skipReasons[task.ID] = "Layer 3: Greenfield root conflict with running agent"
+				continue
+			}
+
+			// Check against tasks we're scheduling in THIS batch
+			// This prevents scheduling multiple root-touching tasks at once
+			if taskTouchesRoot && schedulingRootTouching {
+				debugLog("[scheduler] Layer 3: Skipping task %s (%s) - greenfield: already scheduling another root-touching task", task.ID, task.Title)
+				skipReasons[task.ID] = "Layer 3: Greenfield root conflict in batch"
+				continue
+			}
+
+			if taskTouchesRoot {
+				schedulingRootTouching = true
+			}
+		}
+
+		// Layer 4: General collision avoidance check.
+		if s.collision != nil {
+			if !s.collision.CanSchedule(task, runningAgents) {
+				debugLog("[scheduler] Layer 4: Skipping task %s (%s) - general file boundary overlap", task.ID, task.Title)
+				skipReasons[task.ID] = "Layer 4: File boundary overlap with running agents"
+				continue
+			}
+		}
+
+		schedulable = append(schedulable, task)
 	}
+
+	// Log scheduling summary
+	if len(skipReasons) > 0 {
+		debugLog("[scheduler] Scheduling summary: %d tasks skipped due to collision detection", len(skipReasons))
+		for taskID, reason := range skipReasons {
+			debugLog("[scheduler]   - Task %s: %s", taskID, reason)
+		}
+	}
+	debugLog("[scheduler] Scheduled %d tasks for execution (max parallelism: %d)", len(schedulable), availableSlots)
 
 	// Limit to available slots.
 	if len(schedulable) > availableSlots {
@@ -113,25 +228,40 @@ func (s *Scheduler) Schedule() []*models.Task {
 func (s *Scheduler) OnAgentStart(agent *models.Agent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	debugLog("[scheduler.OnAgentStart] registering agent %s for task %s", agent.ID, agent.TaskID)
 	s.running[agent.ID] = agent
+	debugLog("[scheduler.OnAgentStart] running map now has %d agents", len(s.running))
 }
 
 // OnAgentComplete handles the completion of an agent.
-// It removes the agent from the running map and marks the task complete in the graph.
-func (s *Scheduler) OnAgentComplete(agentID string) {
+// It removes the agent from the running map.
+// If success is true, marks the task complete in the graph (unblocking dependents).
+// If success is false, the task remains incomplete and dependents stay blocked.
+func (s *Scheduler) OnAgentComplete(agentID string, success bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	debugLog("[scheduler.OnAgentComplete] looking up agent %s in running map (has %d agents), success=%v", agentID, len(s.running), success)
 	agent, ok := s.running[agentID]
 	if !ok {
+		debugLog("[scheduler.OnAgentComplete] agent %s NOT FOUND in running map", agentID)
 		return
 	}
 
-	// Mark the task complete in the dependency graph.
-	s.graph.MarkComplete(agent.TaskID)
+	// Only mark the task complete if it succeeded.
+	// Failed tasks should NOT unblock their dependents.
+	if success {
+		debugLog("[scheduler.OnAgentComplete] agent %s was working on task %s, marking complete", agentID, agent.TaskID)
+		s.graph.MarkComplete(agent.TaskID)
+	} else {
+		debugLog("[scheduler.OnAgentComplete] agent %s FAILED task %s, NOT marking complete (dependents remain blocked)", agentID, agent.TaskID)
+		// Mark dependent tasks as explicitly blocked with reason
+		s.markDependentsBlocked(agent.TaskID)
+	}
 
 	// Remove from running agents.
 	delete(s.running, agentID)
+	debugLog("[scheduler.OnAgentComplete] removed agent %s from running map, now have %d agents", agentID, len(s.running))
 }
 
 // GetRunningAgents returns a slice of all currently running agents.
@@ -156,4 +286,18 @@ func (s *Scheduler) GetRunningCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.running)
+}
+
+// markDependentsBlocked marks all tasks that depend on the failed task as blocked.
+// This provides clear visibility that dependent tasks cannot proceed.
+func (s *Scheduler) markDependentsBlocked(failedTaskID string) {
+	dependentIDs := s.graph.GetDependents(failedTaskID)
+	for _, depID := range dependentIDs {
+		task := s.graph.GetTask(depID)
+		if task != nil && task.Status == models.TaskStatusPending {
+			task.Status = models.TaskStatusBlocked
+			task.BlockedReason = "dependency_failed:" + failedTaskID
+			debugLog("[scheduler] marked task %s as blocked (depends on failed task %s)", depID, failedTaskID)
+		}
+	}
 }

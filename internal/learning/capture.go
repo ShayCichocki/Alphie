@@ -19,6 +19,16 @@ type SuggestedLearning struct {
 	RawContext string
 }
 
+// FailureAnalyzerProvider analyzes agent output to extract potential learnings.
+// This interface allows mocking failure analysis in tests.
+type FailureAnalyzerProvider interface {
+	// AnalyzeFailure analyzes agent failure output and extracts suggested learnings.
+	AnalyzeFailure(output string, errorMsg string) []*SuggestedLearning
+}
+
+// Verify FailureAnalyzer implements FailureAnalyzerProvider at compile time.
+var _ FailureAnalyzerProvider = (*FailureAnalyzer)(nil)
+
 // FailureAnalyzer analyzes agent output to extract potential learnings.
 type FailureAnalyzer struct {
 	// patterns are compiled regex patterns for common failure types
@@ -310,7 +320,7 @@ func (c *Capturer) ConfirmAndStore(sl *SuggestedLearning, conceptNames []string)
 
 	// Update outcome type to failure
 	learning.OutcomeType = "failure"
-	if err := c.system.Store().Update(learning); err != nil {
+	if err := c.system.UpdateLearning(learning); err != nil {
 		return nil, err
 	}
 

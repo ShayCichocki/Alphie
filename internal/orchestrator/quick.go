@@ -3,11 +3,13 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/shayc/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/agent"
 )
 
 // QuickResult contains the outcome of a quick task execution.
@@ -18,23 +20,34 @@ type QuickResult struct {
 	TokensUsed int64
 	Cost       float64
 	Duration   time.Duration
+	LogFile    string // Path to detailed log file
 }
 
 // QuickExecutor runs simple tasks directly without decomposition or session branches.
 type QuickExecutor struct {
 	repoPath string
+	// runnerFactory creates ClaudeRunner instances via the Anthropic API.
+	runnerFactory agent.ClaudeRunnerFactory
 }
 
 // NewQuickExecutor creates a new QuickExecutor.
-func NewQuickExecutor(repoPath string) *QuickExecutor {
+// Requires a runner factory for API calls.
+func NewQuickExecutor(repoPath string, factory agent.ClaudeRunnerFactory) *QuickExecutor {
 	return &QuickExecutor{
-		repoPath: repoPath,
+		repoPath:      repoPath,
+		runnerFactory: factory,
 	}
 }
 
 // Execute runs a task directly on the current branch without decomposition.
 func (q *QuickExecutor) Execute(ctx context.Context, task string) (*QuickResult, error) {
 	startTime := time.Now()
+
+	// Create log file for this task
+	logDir := filepath.Join(q.repoPath, ".alphie", "logs")
+	_ = os.MkdirAll(logDir, 0755)
+	logFileName := fmt.Sprintf("quick-%s.log", startTime.Format("2006-01-02-150405"))
+	logFile := filepath.Join(logDir, logFileName)
 
 	// Create token tracker for haiku model
 	tracker := agent.NewTokenTracker("claude-3-5-haiku-20241022")
@@ -45,15 +58,21 @@ func (q *QuickExecutor) Execute(ctx context.Context, task string) (*QuickResult,
 		inputTokens = 10 // minimum
 	}
 
-	// Create Claude process
-	claude := agent.NewClaudeProcess(ctx)
+	// Create Claude runner via API
+	if q.runnerFactory == nil {
+		return nil, fmt.Errorf("runnerFactory is required")
+	}
+	claude := q.runnerFactory.NewRunner()
 
 	// Start the process in the repo directory (no worktree)
 	if err := claude.Start(task, q.repoPath); err != nil {
+		errMsg := fmt.Sprintf("failed to start claude: %v", err)
+		_ = os.WriteFile(logFile, []byte(fmt.Sprintf("Task: %s\nError: %s\n", task, errMsg)), 0644)
 		return &QuickResult{
 			Success:  false,
-			Error:    fmt.Sprintf("failed to start claude: %v", err),
+			Error:    errMsg,
 			Duration: time.Since(startTime),
+			LogFile:  logFile,
 		}, nil
 	}
 
@@ -68,22 +87,31 @@ func (q *QuickExecutor) Execute(ctx context.Context, task string) (*QuickResult,
 				outputBuilder.WriteString("\n")
 			}
 		case agent.StreamEventError:
+			output := outputBuilder.String()
+			logContent := fmt.Sprintf("Task: %s\nError: %s\n\n--- Output ---\n%s\n", task, event.Error, output)
+			_ = os.WriteFile(logFile, []byte(logContent), 0644)
 			return &QuickResult{
 				Success:  false,
-				Output:   outputBuilder.String(),
+				Output:   output,
 				Error:    event.Error,
 				Duration: time.Since(startTime),
+				LogFile:  logFile,
 			}, nil
 		}
 	}
 
 	// Wait for process to complete
 	if err := claude.Wait(); err != nil {
+		output := outputBuilder.String()
+		errMsg := fmt.Sprintf("process failed: %v", err)
+		logContent := fmt.Sprintf("Task: %s\nError: %s\n\n--- Output ---\n%s\n", task, errMsg, output)
+		_ = os.WriteFile(logFile, []byte(logContent), 0644)
 		return &QuickResult{
 			Success:  false,
-			Output:   outputBuilder.String(),
-			Error:    fmt.Sprintf("process failed: %v", err),
+			Output:   output,
+			Error:    errMsg,
 			Duration: time.Since(startTime),
+			LogFile:  logFile,
 		}, nil
 	}
 
@@ -103,12 +131,23 @@ func (q *QuickExecutor) Execute(ctx context.Context, task string) (*QuickResult,
 		output += fmt.Sprintf("\n[Auto-commit: %v]", commitErr)
 	}
 
+	// Write detailed log file
+	logContent := fmt.Sprintf("Task: %s\nStarted: %s\nDuration: %s\nTokens: %d\nCost: $%.4f\n\n--- Output ---\n%s\n",
+		task, startTime.Format(time.RFC3339), time.Since(startTime), tracker.GetUsage().TotalTokens, tracker.GetCost(), output)
+	if commitErr != nil {
+		logContent += fmt.Sprintf("\n--- Auto-commit ---\nError: %v\n", commitErr)
+	} else {
+		logContent += "\n--- Auto-commit ---\nSuccess\n"
+	}
+	_ = os.WriteFile(logFile, []byte(logContent), 0644)
+
 	return &QuickResult{
 		Success:    true,
 		Output:     output,
 		TokensUsed: tracker.GetUsage().TotalTokens,
 		Cost:       tracker.GetCost(),
 		Duration:   time.Since(startTime),
+		LogFile:    logFile,
 	}, nil
 }
 

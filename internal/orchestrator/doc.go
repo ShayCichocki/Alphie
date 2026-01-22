@@ -14,7 +14,7 @@
 //
 // Example usage:
 //
-//	claude := agent.NewClaudeProcess(ctx)
+//	claude := runnerFactory.NewRunner()
 //	decomposer := orchestrator.NewDecomposer(claude)
 //	tasks, err := decomposer.Decompose(ctx, "Build a user authentication system")
 package orchestrator

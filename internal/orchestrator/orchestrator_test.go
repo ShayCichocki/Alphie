@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shayc/alphie/internal/prog"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/prog"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestNewOrchestrator(t *testing.T) {
@@ -24,20 +24,20 @@ func TestNewOrchestrator(t *testing.T) {
 		t.Fatal("expected non-nil orchestrator")
 	}
 
-	if orch.tier != models.TierBuilder {
-		t.Errorf("expected tier %v, got %v", models.TierBuilder, orch.tier)
+	if orch.config.Tier != models.TierBuilder {
+		t.Errorf("expected tier %v, got %v", models.TierBuilder, orch.config.Tier)
 	}
 
-	if orch.maxAgents != 4 {
-		t.Errorf("expected maxAgents 4, got %d", orch.maxAgents)
+	if orch.config.MaxAgents != 4 {
+		t.Errorf("expected maxAgents 4, got %d", orch.config.MaxAgents)
 	}
 
-	if !orch.greenfield {
+	if !orch.config.Greenfield {
 		t.Error("expected greenfield to be true")
 	}
 
-	if orch.repoPath != "/tmp/test-repo" {
-		t.Errorf("expected repoPath '/tmp/test-repo', got %q", orch.repoPath)
+	if orch.config.RepoPath != "/tmp/test-repo" {
+		t.Errorf("expected repoPath '/tmp/test-repo', got %q", orch.config.RepoPath)
 	}
 }
 
@@ -50,8 +50,8 @@ func TestNewOrchestratorDefaultMaxAgents(t *testing.T) {
 	}
 
 	orch := NewOrchestrator(config)
-	if orch.maxAgents != 4 {
-		t.Errorf("expected default maxAgents 4, got %d", orch.maxAgents)
+	if orch.config.MaxAgents != 4 {
+		t.Errorf("expected default maxAgents 4, got %d", orch.config.MaxAgents)
 	}
 }
 
@@ -175,35 +175,6 @@ func TestOrchestratorGetSessionBranch(t *testing.T) {
 	})
 }
 
-func TestOrchestratorGetGraph(t *testing.T) {
-	config := OrchestratorConfig{
-		RepoPath:   "/tmp/test-repo",
-		Tier:       models.TierBuilder,
-		Greenfield: true,
-	}
-
-	orch := NewOrchestrator(config)
-	graph := orch.GetGraph()
-	if graph == nil {
-		t.Error("expected non-nil graph")
-	}
-}
-
-func TestOrchestratorGetScheduler(t *testing.T) {
-	config := OrchestratorConfig{
-		RepoPath:   "/tmp/test-repo",
-		Tier:       models.TierBuilder,
-		Greenfield: true,
-	}
-
-	orch := NewOrchestrator(config)
-	// Scheduler is nil until Run() is called and graph is built
-	scheduler := orch.GetScheduler()
-	if scheduler != nil {
-		t.Error("expected nil scheduler before Run()")
-	}
-}
-
 func TestEventTypes(t *testing.T) {
 	// Verify all event types are distinct
 	eventTypes := []EventType{
@@ -315,11 +286,11 @@ func TestCreateProgEpicAndTasks(t *testing.T) {
 		},
 	}
 
-	// Test createProgEpicAndTasks
+	// Test CreateEpicAndTasks via progCoord
 	request := "Build a new feature with multiple components"
-	err = orch.createProgEpicAndTasks(request, tasks)
+	err = orch.progCoord.CreateEpicAndTasks(request, tasks)
 	if err != nil {
-		t.Fatalf("createProgEpicAndTasks failed: %v", err)
+		t.Fatalf("CreateEpicAndTasks failed: %v", err)
 	}
 
 	// Verify epic was created
@@ -367,7 +338,7 @@ func TestCreateProgEpicAndTasksNilClient(t *testing.T) {
 	}
 
 	// Should succeed (no-op) when client is nil
-	err := orch.createProgEpicAndTasks("Test request", tasks)
+	err := orch.progCoord.CreateEpicAndTasks("Test request", tasks)
 	if err != nil {
 		t.Errorf("Expected no error with nil client, got: %v", err)
 	}
@@ -416,9 +387,9 @@ func TestCreateProgEpicAndTasksLongRequest(t *testing.T) {
 		},
 	}
 
-	err = orch.createProgEpicAndTasks(longRequest, tasks)
+	err = orch.progCoord.CreateEpicAndTasks(longRequest, tasks)
 	if err != nil {
-		t.Fatalf("createProgEpicAndTasks failed: %v", err)
+		t.Fatalf("CreateEpicAndTasks failed: %v", err)
 	}
 
 	// The function should have succeeded with truncated title

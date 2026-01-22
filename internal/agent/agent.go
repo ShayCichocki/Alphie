@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // Common errors for agent lifecycle management.
@@ -131,12 +131,22 @@ func (m *Manager) emit(event LifecycleEvent) {
 	}
 }
 
-// Create creates a new agent in pending state.
+// Create creates a new agent in pending state with an auto-generated ID.
 func (m *Manager) Create(taskID, worktreePath string) (*models.Agent, error) {
+	return m.CreateWithID("", taskID, worktreePath)
+}
+
+// CreateWithID creates a new agent in pending state with the given ID.
+// If agentID is empty, a new UUID is generated.
+func (m *Manager) CreateWithID(agentID, taskID, worktreePath string) (*models.Agent, error) {
 	m.mu.Lock()
 
+	if agentID == "" {
+		agentID = uuid.New().String()
+	}
+
 	agent := &models.Agent{
-		ID:           uuid.New().String(),
+		ID:           agentID,
 		TaskID:       taskID,
 		Status:       models.AgentStatusPending,
 		WorktreePath: worktreePath,

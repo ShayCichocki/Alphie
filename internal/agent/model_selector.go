@@ -4,7 +4,7 @@ package agent
 import (
 	"strings"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // Model identifiers for different capability levels.

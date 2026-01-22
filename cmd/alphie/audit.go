@@ -7,8 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/shayc/alphie/internal/agent"
-	"github.com/shayc/alphie/internal/architect"
+	"github.com/ShayCichocki/alphie/internal/architect"
 	"github.com/spf13/cobra"
 )
 
@@ -60,8 +59,14 @@ func runAudit(cmd *cobra.Command, args []string) error {
 	// Create a context for the operation
 	ctx := context.Background()
 
-	// Create Claude process for parsing
-	parserClaude := agent.NewClaudeProcess(ctx)
+	// Create runner factory for API calls
+	runnerFactory, err := createRunnerFactory()
+	if err != nil {
+		return fmt.Errorf("create runner factory: %w", err)
+	}
+
+	// Create Claude runner for parsing
+	parserClaude := runnerFactory.NewRunner()
 
 	// Parse the architecture document
 	if !auditJSON {
@@ -78,8 +83,8 @@ func runAudit(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Found %d features/requirements\n", len(spec.Features))
 	}
 
-	// Create Claude process for auditing
-	auditorClaude := agent.NewClaudeProcess(ctx)
+	// Create Claude runner for auditing
+	auditorClaude := runnerFactory.NewRunner()
 
 	// Run the audit
 	if !auditJSON {

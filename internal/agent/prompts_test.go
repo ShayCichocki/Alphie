@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestScopeGuidancePromptContent(t *testing.T) {

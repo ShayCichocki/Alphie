@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
-	"github.com/shayc/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/exec"
+	"github.com/ShayCichocki/alphie/internal/git"
 )
 
 // mergeSystemPrompt is the system prompt for the merge conflict resolver.
@@ -74,17 +75,44 @@ type mergeResponse struct {
 // - Same file but different functions, OR
 // - Both sides pass tests after merge
 type SemanticMerger struct {
-	// claude is the Claude process used for merge resolution.
-	claude *agent.ClaudeProcess
+	// claude is the Claude runner used for merge resolution.
+	// Can be either subprocess (ClaudeProcess) or direct API (ClaudeAPIAdapter).
+	claude agent.ClaudeRunner
 	// repoPath is the path to the git repository.
 	repoPath string
+	// git provides git operations.
+	git git.Runner
+	// exec provides command execution.
+	exec exec.CommandRunner
 }
 
-// NewSemanticMerger creates a new SemanticMerger with the given Claude process and repository path.
-func NewSemanticMerger(claude *agent.ClaudeProcess, repoPath string) *SemanticMerger {
+// NewSemanticMerger creates a new SemanticMerger with the given Claude runner and repository path.
+func NewSemanticMerger(claude agent.ClaudeRunner, repoPath string) *SemanticMerger {
 	return &SemanticMerger{
 		claude:   claude,
 		repoPath: repoPath,
+		git:      git.NewRunner(repoPath),
+		exec:     exec.NewRunner(),
+	}
+}
+
+// NewSemanticMergerWithRunner creates a new SemanticMerger with custom dependencies (for testing).
+func NewSemanticMergerWithRunner(claude agent.ClaudeRunner, repoPath string, runner git.Runner) *SemanticMerger {
+	return &SemanticMerger{
+		claude:   claude,
+		repoPath: repoPath,
+		git:      runner,
+		exec:     exec.NewRunner(),
+	}
+}
+
+// NewSemanticMergerWithDeps creates a new SemanticMerger with all custom dependencies (for testing).
+func NewSemanticMergerWithDeps(claude agent.ClaudeRunner, repoPath string, gitRunner git.Runner, cmdRunner exec.CommandRunner) *SemanticMerger {
+	return &SemanticMerger{
+		claude:   claude,
+		repoPath: repoPath,
+		git:      gitRunner,
+		exec:     cmdRunner,
 	}
 }
 
@@ -97,17 +125,17 @@ func NewSemanticMerger(claude *agent.ClaudeProcess, repoPath string) *SemanticMe
 // 5. If unresolvable: return NeedsHuman = true
 func (m *SemanticMerger) Merge(ctx context.Context, branch1, branch2 string, conflictFiles []string) (*SemanticMergeResult, error) {
 	// Get diffs from both branches relative to their merge base
-	mergeBase, err := m.getMergeBase(ctx, branch1, branch2)
+	mergeBase, err := m.git.MergeBase(branch1, branch2)
 	if err != nil {
 		return nil, fmt.Errorf("get merge base: %w", err)
 	}
 
-	diff1, err := m.getDiff(ctx, mergeBase, branch1)
+	diff1, err := m.git.DiffBetween(mergeBase, branch1)
 	if err != nil {
 		return nil, fmt.Errorf("get diff for %s: %w", branch1, err)
 	}
 
-	diff2, err := m.getDiff(ctx, mergeBase, branch2)
+	diff2, err := m.git.DiffBetween(mergeBase, branch2)
 	if err != nil {
 		return nil, fmt.Errorf("get diff for %s: %w", branch2, err)
 	}
@@ -201,7 +229,7 @@ func (m *SemanticMerger) Merge(ctx context.Context, branch1, branch2 string, con
 	// Validate the merge - check if code compiles
 	if err := m.validateCompiles(ctx); err != nil {
 		// Revert changes on validation failure
-		_ = m.revertChanges(ctx)
+		_ = m.revertChanges()
 		return &SemanticMergeResult{
 			Success:    false,
 			NeedsHuman: true,
@@ -212,7 +240,7 @@ func (m *SemanticMerger) Merge(ctx context.Context, branch1, branch2 string, con
 	// Validate the merge - run tests
 	if err := m.validateTests(ctx); err != nil {
 		// Revert changes on test failure
-		_ = m.revertChanges(ctx)
+		_ = m.revertChanges()
 		return &SemanticMergeResult{
 			Success:    false,
 			NeedsHuman: true,
@@ -226,7 +254,7 @@ func (m *SemanticMerger) Merge(ctx context.Context, branch1, branch2 string, con
 	}
 
 	// Stage and commit the merged files
-	if err := m.finalizeSemanticMerge(ctx, mergedFiles, branch1, branch2, mergeResp.Reasoning); err != nil {
+	if err := m.finalizeSemanticMerge(mergedFiles, branch1, branch2, mergeResp.Reasoning); err != nil {
 		return &SemanticMergeResult{
 			Success:    false,
 			NeedsHuman: true,
@@ -235,8 +263,8 @@ func (m *SemanticMerger) Merge(ctx context.Context, branch1, branch2 string, con
 	}
 
 	// Get the final diff and changed files after successful merge
-	finalDiff, _ := m.getFinalDiff(ctx)
-	changedFiles, _ := m.getChangedFiles(ctx)
+	finalDiff, _ := m.git.DiffBetween("HEAD^", "HEAD")
+	changedFiles, _ := m.git.ChangedFilesBetween("HEAD^", "HEAD")
 
 	return &SemanticMergeResult{
 		Success:      true,
@@ -273,43 +301,35 @@ func (m *SemanticMerger) CanAutoMerge(diff1, diff2 string) bool {
 	return false
 }
 
-// getMergeBase finds the common ancestor of two branches.
-func (m *SemanticMerger) getMergeBase(ctx context.Context, branch1, branch2 string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "merge-base", branch1, branch2)
-	cmd.Dir = m.repoPath
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
-}
-
-// getDiff returns the diff between two refs.
-func (m *SemanticMerger) getDiff(ctx context.Context, base, branch string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", base, branch)
-	cmd.Dir = m.repoPath
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return string(output), nil
-}
-
 // validateCompiles checks if the code in the repository compiles.
+// It detects the project type and uses the appropriate build command.
 func (m *SemanticMerger) validateCompiles(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "go", "build", "./...")
-	cmd.Dir = m.repoPath
-	if output, err := cmd.CombinedOutput(); err != nil {
+	info := GetProjectTypeInfo(m.repoPath)
+
+	// If no build command, skip validation (unknown project type or no build script)
+	if len(info.BuildCommand) == 0 {
+		return nil
+	}
+
+	output, err := m.exec.Run(ctx, m.repoPath, info.BuildCommand[0], info.BuildCommand[1:]...)
+	if err != nil {
 		return fmt.Errorf("%w: %s", err, string(output))
 	}
 	return nil
 }
 
 // validateTests runs the test suite and returns an error if tests fail.
+// It detects the project type and uses the appropriate test command.
 func (m *SemanticMerger) validateTests(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "go", "test", "./...")
-	cmd.Dir = m.repoPath
-	if output, err := cmd.CombinedOutput(); err != nil {
+	info := GetProjectTypeInfo(m.repoPath)
+
+	// If no test command, skip validation
+	if len(info.TestCommand) == 0 {
+		return nil
+	}
+
+	output, err := m.exec.Run(ctx, m.repoPath, info.TestCommand[0], info.TestCommand[1:]...)
+	if err != nil {
 		return fmt.Errorf("%w: %s", err, string(output))
 	}
 	return nil
@@ -413,10 +433,10 @@ func writeFile(path, content string) error {
 
 // finalizeSemanticMerge stages the merged files and creates a commit.
 // This is called after all files have been written and validated.
-func (m *SemanticMerger) finalizeSemanticMerge(ctx context.Context, files []string, branch1, branch2, reasoning string) error {
+func (m *SemanticMerger) finalizeSemanticMerge(files []string, branch1, branch2, reasoning string) error {
 	// Stage all merged files
 	for _, file := range files {
-		if err := m.runGitCtx(ctx, "add", file); err != nil {
+		if err := m.git.Add(file); err != nil {
 			return fmt.Errorf("stage file %s: %w", file, err)
 		}
 	}
@@ -428,7 +448,7 @@ func (m *SemanticMerger) finalizeSemanticMerge(ctx context.Context, files []stri
 	}
 
 	// Create the merge commit
-	if err := m.runGitCtx(ctx, "commit", "-m", commitMsg); err != nil {
+	if err := m.git.Commit(commitMsg); err != nil {
 		return fmt.Errorf("create commit: %w", err)
 	}
 
@@ -437,62 +457,13 @@ func (m *SemanticMerger) finalizeSemanticMerge(ctx context.Context, files []stri
 
 // revertChanges discards any uncommitted changes in the working directory.
 // This is called when validation fails after writing merged files.
-func (m *SemanticMerger) revertChanges(ctx context.Context) error {
+func (m *SemanticMerger) revertChanges() error {
 	// Reset staged changes
-	if err := m.runGitCtx(ctx, "reset", "HEAD"); err != nil {
-		// Ignore errors, proceed with checkout
-	}
+	_ = m.git.Reset("HEAD") // Ignore errors, proceed with checkout
 
 	// Discard working directory changes
-	if err := m.runGitCtx(ctx, "checkout", "."); err != nil {
+	if err := m.git.CheckoutPath("."); err != nil {
 		return fmt.Errorf("revert changes: %w", err)
-	}
-
-	return nil
-}
-
-// getFinalDiff returns the diff of the last commit compared to its parent.
-func (m *SemanticMerger) getFinalDiff(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "HEAD^", "HEAD")
-	cmd.Dir = m.repoPath
-
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("get final diff: %w", err)
-	}
-
-	return string(output), nil
-}
-
-// getChangedFiles returns the list of files changed in the last commit.
-func (m *SemanticMerger) getChangedFiles(ctx context.Context) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "HEAD^", "HEAD")
-	cmd.Dir = m.repoPath
-
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("get changed files: %w", err)
-	}
-
-	var files []string
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			files = append(files, line)
-		}
-	}
-
-	return files, nil
-}
-
-// runGitCtx executes a git command with context support.
-func (m *SemanticMerger) runGitCtx(ctx context.Context, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = m.repoPath
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s: %s", err, string(output))
 	}
 
 	return nil

@@ -3,49 +3,90 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os/exec"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/shayc/alphie/internal/learning"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/learning"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // ExecutionResult contains the outcome of a single task execution.
+// Uses primitive fields for post-processing results to avoid leaking
+// orchestrator-specific types across package boundaries.
 type ExecutionResult struct {
+	// Core result fields (always populated)
 	// Success indicates whether the task completed successfully.
 	Success bool
 	// Output contains the captured output from the agent.
 	Output string
 	// Error contains the error message if execution failed.
 	Error string
+
+	// Metrics (always populated)
 	// TokensUsed is the total number of tokens consumed.
 	TokensUsed int64
 	// Cost is the total cost in dollars.
 	Cost float64
 	// Duration is how long the execution took.
 	Duration time.Duration
+
+	// Context (always populated)
 	// AgentID is the ID of the agent that executed the task.
 	AgentID string
 	// WorktreePath is the path to the worktree used for execution.
 	WorktreePath string
 	// Model is the Claude model that was dynamically selected for this task.
 	Model string
+	// LogFile is the path to the detailed execution log.
+	LogFile string
+
+	// Learning (always populated, may be empty)
 	// SuggestedLearnings contains potential learnings extracted from failures.
 	// These need user confirmation before being stored.
 	SuggestedLearnings []*learning.SuggestedLearning
+	// LearningsUsed contains the IDs of learnings that were retrieved and injected for this task.
+	// Used for effectiveness tracking.
+	LearningsUsed []string
+
+	// Post-processing results (primitives, zero values = not run)
+	// LoopIterations is the number of self-critique loop iterations performed.
+	// Zero indicates the loop was not run.
+	LoopIterations int
+	// LoopExitReason describes why the loop terminated (empty if not run).
+	LoopExitReason string
+	// GatesPassed indicates whether quality gates passed. Nil means gates were not run.
+	GatesPassed *bool
+	// VerifyPassed indicates whether verification passed. Nil means verification was not run.
+	VerifyPassed *bool
+	// VerifySummary is a human-readable summary of verification results.
+	VerifySummary string
 }
 
-// Executor wires together worktree creation, subprocess management,
+// AreGatesPassed returns whether quality gates passed, or true if not run.
+func (r *ExecutionResult) AreGatesPassed() bool {
+	return r.GatesPassed == nil || *r.GatesPassed
+}
+
+// IsVerified returns whether verification passed, or true if not run.
+func (r *ExecutionResult) IsVerified() bool {
+	return r.VerifyPassed == nil || *r.VerifyPassed
+}
+
+// Executor wires together worktree creation, API execution,
 // stream parsing, token tracking, and cleanup for single-agent task execution.
 type Executor struct {
-	worktreeMgr      *WorktreeManager
-	tokenTracker     *AggregateTracker
-	agentMgr         *Manager
-	model            string
-	failureAnalyzer  *learning.FailureAnalyzer
+	worktreeMgr     WorktreeProvider
+	tokenTracker    TokenAggregator
+	agentMgr        AgentLifecycle
+	model           string
+	failureAnalyzer learning.FailureAnalyzerProvider
+	taskTimeout     time.Duration
+
+	// Runner factory for creating ClaudeRunner instances (API-based)
+	runnerFactory ClaudeRunnerFactory
 }
 
 // ExecutorConfig contains configuration options for the Executor.
@@ -56,6 +97,21 @@ type ExecutorConfig struct {
 	RepoPath string
 	// Model is the Claude model to use for cost calculation.
 	Model string
+	// TaskTimeout is the maximum duration for a single task execution.
+	// Default is 10 minutes if not specified.
+	TaskTimeout time.Duration
+
+	// RunnerFactory creates ClaudeRunner instances for API execution.
+	// Required - the Executor always uses direct API calls.
+	RunnerFactory ClaudeRunnerFactory
+
+	// Optional dependency injection (nil = use defaults)
+	// TokenTracker is the token aggregator. If nil, NewAggregateTracker() is used.
+	TokenTracker TokenAggregator
+	// AgentManager is the agent lifecycle manager. If nil, NewManager() is used.
+	AgentManager AgentLifecycle
+	// FailureAnalyzer is the failure analyzer. If nil, learning.NewFailureAnalyzer() is used.
+	FailureAnalyzer learning.FailureAnalyzerProvider
 }
 
 // NewExecutor creates a new Executor with the given configuration.
@@ -70,12 +126,40 @@ func NewExecutor(cfg ExecutorConfig) (*Executor, error) {
 		model = "claude-sonnet-4-20250514"
 	}
 
+	taskTimeout := cfg.TaskTimeout
+	if taskTimeout == 0 {
+		taskTimeout = 10 * time.Minute // Default 10 minute timeout
+	}
+
+	// RunnerFactory is always required - API is the only execution path
+	if cfg.RunnerFactory == nil {
+		return nil, fmt.Errorf("RunnerFactory is required")
+	}
+
+	// Use injected dependencies or fall back to defaults
+	tokenTracker := cfg.TokenTracker
+	if tokenTracker == nil {
+		tokenTracker = NewAggregateTracker()
+	}
+
+	agentMgr := cfg.AgentManager
+	if agentMgr == nil {
+		agentMgr = NewManager()
+	}
+
+	failureAnalyzer := cfg.FailureAnalyzer
+	if failureAnalyzer == nil {
+		failureAnalyzer = learning.NewFailureAnalyzer()
+	}
+
 	return &Executor{
 		worktreeMgr:     worktreeMgr,
-		tokenTracker:    NewAggregateTracker(),
-		agentMgr:        NewManager(),
+		tokenTracker:    tokenTracker,
+		agentMgr:        agentMgr,
 		model:           model,
-		failureAnalyzer: learning.NewFailureAnalyzer(),
+		failureAnalyzer: failureAnalyzer,
+		taskTimeout:     taskTimeout,
+		runnerFactory:   cfg.RunnerFactory,
 	}, nil
 }
 
@@ -89,6 +173,8 @@ type ProgressUpdate struct {
 	Cost float64
 	// Duration is time elapsed since execution started.
 	Duration time.Duration
+	// CurrentAction describes what the agent is doing right now (e.g., "Reading auth.go").
+	CurrentAction string
 }
 
 // ProgressCallback is called periodically during task execution with progress updates.
@@ -96,12 +182,26 @@ type ProgressCallback func(update ProgressUpdate)
 
 // ExecuteOptions contains optional parameters for task execution.
 type ExecuteOptions struct {
+	// AgentID is the pre-assigned agent ID to use. If empty, a new ID is generated.
+	// This allows the orchestrator to track agents consistently.
+	AgentID string
 	// Learnings are relevant learnings retrieved for this task.
 	// They are injected into the agent's prompt to provide context.
 	Learnings []*learning.Learning
 	// OnProgress is called periodically with execution progress updates.
 	// Can be nil if progress updates are not needed.
 	OnProgress ProgressCallback
+	// EnableRalphLoop enables the self-critique loop after initial execution.
+	// When enabled, the agent will critique its own work and iterate until
+	// the quality threshold is met or max iterations reached.
+	// Tier-specific: Scout skips (0 iterations), Builder gets 3, Architect gets 5.
+	EnableRalphLoop bool
+	// EnableQualityGates runs quality gates (lint, build, test, typecheck) after execution.
+	// Gates are tier-specific: Scout=lint, Builder=build+lint+typecheck, Architect=all.
+	EnableQualityGates bool
+	// Baseline is the session baseline for regression detection.
+	// When set, quality gates compare against baseline to detect new failures.
+	Baseline *Baseline
 }
 
 // Execute runs a single task with a single agent.
@@ -112,6 +212,13 @@ func (e *Executor) Execute(ctx context.Context, task *models.Task, tier models.T
 	return e.ExecuteWithOptions(ctx, task, tier, nil)
 }
 
+// startupTimeout is how long we wait for the Claude CLI to produce its first output.
+// If no output is received within this time, we assume startup hung and retry.
+const startupTimeout = 45 * time.Second
+
+// maxStartupRetries is the maximum number of times to retry if startup hangs.
+const maxStartupRetries = 2
+
 // ExecuteWithOptions runs a single task with a single agent, accepting optional parameters.
 // It creates an isolated worktree, starts the Claude Code process,
 // streams and parses output, tracks tokens, waits for completion,
@@ -119,6 +226,25 @@ func (e *Executor) Execute(ctx context.Context, task *models.Task, tier models.T
 func (e *Executor) ExecuteWithOptions(ctx context.Context, task *models.Task, tier models.Tier, opts *ExecuteOptions) (*ExecutionResult, error) {
 	startTime := time.Now()
 	result := &ExecutionResult{}
+
+	// Track which learnings were used for this task (for effectiveness tracking)
+	if opts != nil && len(opts.Learnings) > 0 {
+		result.LearningsUsed = make([]string, len(opts.Learnings))
+		for i, l := range opts.Learnings {
+			result.LearningsUsed[i] = l.ID
+		}
+	}
+
+	// Apply task timeout
+	ctx, cancel := context.WithTimeout(ctx, e.taskTimeout)
+	defer cancel()
+
+	// Create log file for this task
+	logDir := filepath.Join(e.worktreeMgr.RepoPath(), ".alphie", "logs")
+	_ = os.MkdirAll(logDir, 0755)
+	logFileName := fmt.Sprintf("task-%s-%s.log", task.ID[:8], startTime.Format("150405"))
+	logFile := filepath.Join(logDir, logFileName)
+	result.LogFile = logFile
 
 	// 1. Create worktree
 	worktree, err := e.worktreeMgr.Create(task.ID)
@@ -134,7 +260,12 @@ func (e *Executor) ExecuteWithOptions(ctx context.Context, task *models.Task, ti
 	}()
 
 	// 2. Create agent and token tracker
-	agent, err := e.agentMgr.Create(task.ID, worktree.Path)
+	// Use provided AgentID if available, otherwise generate a new one
+	var agentID string
+	if opts != nil && opts.AgentID != "" {
+		agentID = opts.AgentID
+	}
+	agent, err := e.agentMgr.CreateWithID(agentID, task.ID, worktree.Path)
 	if err != nil {
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
@@ -150,41 +281,103 @@ func (e *Executor) ExecuteWithOptions(ctx context.Context, task *models.Task, ti
 	// 3. Build the prompt from task
 	prompt := e.buildPrompt(task, tier, opts)
 
-	// 4. Start Claude Code process
-	proc := NewClaudeProcess(ctx)
-	if err := proc.Start(prompt, worktree.Path); err != nil {
-		_ = e.agentMgr.Fail(agent.ID, fmt.Sprintf("failed to start process: %v", err))
-		return nil, fmt.Errorf("start claude process: %w", err)
-	}
-
-	// Transition agent to running
-	if err := e.agentMgr.Start(agent.ID, proc.PID()); err != nil {
-		_ = proc.Kill()
-		return nil, fmt.Errorf("start agent: %w", err)
-	}
-
-	// 5. Stream and parse output, track tokens
+	// Declare variables used across both pre-impl contract and execution
+	var proc ClaudeRunner
+	var procErr error
 	var outputBuilder strings.Builder
-	lastProgressUpdate := time.Now()
-	progressInterval := 2 * time.Second // Send progress updates every 2 seconds
-	for event := range proc.Output() {
-		e.processStreamEvent(event, tracker, &outputBuilder)
+	var currentAction string
 
-		// Send periodic progress updates
-		if opts != nil && opts.OnProgress != nil && time.Since(lastProgressUpdate) >= progressInterval {
-			usage := tracker.GetUsage()
-			opts.OnProgress(ProgressUpdate{
-				AgentID:    agent.ID,
-				TokensUsed: usage.TotalTokens,
-				Cost:       tracker.GetCost(),
-				Duration:   time.Since(startTime),
-			})
-			lastProgressUpdate = time.Now()
+	// 3b. Generate draft verification contract BEFORE implementation
+	// This establishes minimum verification requirements that cannot be weakened
+	verifyCtx := e.generateDraftContract(ctx, task.ID, task.VerificationIntent, task.FileBoundaries, worktree.Path)
+
+	// 4. Start Claude Code process with retry logic for startup hangs
+
+	for attempt := 0; attempt <= maxStartupRetries; attempt++ {
+		if attempt > 0 {
+			// Log retry attempt
+			outputBuilder.WriteString(fmt.Sprintf("\n[Retry attempt %d: previous startup timed out after %v]\n", attempt, startupTimeout))
+			// Brief delay before retry to avoid hammering
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
 		}
-	}
 
-	// 6. Wait for completion
-	procErr := proc.Wait()
+		// Create runner via factory (API is the only execution path)
+		proc = e.runnerFactory.NewRunner()
+		startOpts := &StartOptions{Model: selectedModel}
+		if err := proc.StartWithOptions(prompt, worktree.Path, startOpts); err != nil {
+			_ = e.agentMgr.Fail(agent.ID, fmt.Sprintf("failed to start process: %v", err))
+			return nil, fmt.Errorf("start claude process: %w", err)
+		}
+
+		// Transition agent to running (only on first attempt)
+		if attempt == 0 {
+			if err := e.agentMgr.Start(agent.ID, proc.PID()); err != nil {
+				_ = proc.Kill()
+				return nil, fmt.Errorf("start agent: %w", err)
+			}
+		}
+
+		// 5. Stream and parse output with startup timeout detection
+		startupTimedOut := false
+		gotFirstOutput := false
+		startupDeadline := time.Now().Add(startupTimeout)
+		lastProgressUpdate := time.Now()
+		progressInterval := 2 * time.Second
+
+	streamLoop:
+		for {
+			select {
+			case event, ok := <-proc.Output():
+				if !ok {
+					// Channel closed, process done
+					break streamLoop
+				}
+
+				gotFirstOutput = true
+				e.processStreamEvent(event, tracker, &outputBuilder)
+
+				// Track current tool action
+				if event.ToolAction != "" {
+					currentAction = event.ToolAction
+				}
+
+				// Send periodic progress updates
+				if opts != nil && opts.OnProgress != nil && time.Since(lastProgressUpdate) >= progressInterval {
+					usage := tracker.GetUsage()
+					opts.OnProgress(ProgressUpdate{
+						AgentID:       agent.ID,
+						TokensUsed:    usage.TotalTokens,
+						Cost:          tracker.GetCost(),
+						Duration:      time.Since(startTime),
+						CurrentAction: currentAction,
+					})
+					lastProgressUpdate = time.Now()
+				}
+
+			case <-time.After(100 * time.Millisecond):
+				// Check startup timeout only if we haven't received any output yet
+				if !gotFirstOutput && time.Now().After(startupDeadline) {
+					startupTimedOut = true
+					outputBuilder.WriteString(fmt.Sprintf("\n[Startup timeout: no output received within %v]\n", startupTimeout))
+					_ = proc.Kill()
+					break streamLoop
+				}
+			}
+		}
+
+		// If startup timed out and we have retries left, continue to next attempt
+		if startupTimedOut && attempt < maxStartupRetries {
+			continue
+		}
+
+		// Otherwise, we're done with retries (either success or final failure)
+		procErr = proc.Wait()
+		break
+	}
 
 	// Capture final results
 	result.Output = outputBuilder.String()
@@ -197,6 +390,11 @@ func (e *Executor) ExecuteWithOptions(ctx context.Context, task *models.Task, ti
 	// Update agent with usage
 	_ = e.agentMgr.UpdateUsage(agent.ID, usage.TotalTokens, result.Cost)
 
+	// 6b. Run Ralph-loop if enabled and appropriate for tier
+	if procErr == nil {
+		e.runRalphLoopIfEnabled(ctx, result, task, tier, opts, worktree.Path, verifyCtx)
+	}
+
 	// 7. Auto-commit any changes made by the agent
 	// This ensures changes are preserved when the worktree is removed
 	if procErr == nil {
@@ -207,191 +405,24 @@ func (e *Executor) ExecuteWithOptions(ctx context.Context, task *models.Task, ti
 	}
 
 	// 8. Determine success/failure
-	if procErr != nil {
-		result.Success = false
-		result.Error = procErr.Error()
-		if stderr := proc.Stderr(); stderr != "" {
-			result.Error += "; stderr: " + stderr
-		}
-		_ = e.agentMgr.Fail(agent.ID, result.Error)
-
-		// 8. Capture potential learnings from failure
-		if e.failureAnalyzer != nil {
-			result.SuggestedLearnings = e.failureAnalyzer.AnalyzeFailure(result.Output, result.Error)
-		}
+	if procErr != nil || ctx.Err() != nil {
+		e.handleExecutionFailure(ctx, result, proc, procErr, agent.ID)
 	} else {
 		result.Success = true
 		_ = e.agentMgr.Complete(agent.ID)
 	}
 
+	// Run quality gates if enabled and execution succeeded
+	if result.Success {
+		e.runQualityGatesIfEnabled(result, opts, worktree.Path, tier, agent.ID)
+	}
+
+	// Unified pass/fail: both verification and gates must pass
+	e.checkVerificationPassed(result, agent.ID)
+
+	// Write detailed log file
+	e.writeLogFile(logFile, task, tier, result, startTime)
+
 	return result, nil
 }
 
-// buildPrompt constructs the prompt for the Claude Code agent.
-func (e *Executor) buildPrompt(task *models.Task, tier models.Tier, opts *ExecuteOptions) string {
-	var sb strings.Builder
-
-	// Inject scope guidance at task start to prevent scope creep
-	sb.WriteString(ScopeGuidancePrompt)
-	sb.WriteString("\n")
-
-	sb.WriteString("You are working on a task.\n\n")
-	sb.WriteString("Task ID: ")
-	sb.WriteString(task.ID)
-	sb.WriteString("\n")
-	sb.WriteString("Title: ")
-	sb.WriteString(task.Title)
-	sb.WriteString("\n")
-
-	if task.Description != "" {
-		sb.WriteString("\nDescription:\n")
-		sb.WriteString(task.Description)
-		sb.WriteString("\n")
-	}
-
-	sb.WriteString("\nTier: ")
-	sb.WriteString(string(tier))
-	sb.WriteString("\n")
-
-	// Add tier-specific guidance
-	switch tier {
-	case models.TierScout:
-		sb.WriteString("\nYou are operating as a Scout agent. Focus on exploration, research, and lightweight tasks.\n")
-	case models.TierBuilder:
-		sb.WriteString("\nYou are operating as a Builder agent. Focus on implementation and standard development tasks.\n")
-	case models.TierArchitect:
-		sb.WriteString("\nYou are operating as an Architect agent. Focus on complex design, architecture, and system-level decisions.\n")
-	}
-
-	// Inject relevant learnings if available
-	if opts != nil && len(opts.Learnings) > 0 {
-		sb.WriteString("\n## Relevant Learnings\n")
-		sb.WriteString("The following learnings from previous experiences may be helpful:\n\n")
-		for i, l := range opts.Learnings {
-			sb.WriteString(fmt.Sprintf("### Learning %d\n", i+1))
-			sb.WriteString(fmt.Sprintf("- **When**: %s\n", l.Condition))
-			sb.WriteString(fmt.Sprintf("- **Do**: %s\n", l.Action))
-			sb.WriteString(fmt.Sprintf("- **Result**: %s\n", l.Outcome))
-			sb.WriteString("\n")
-		}
-	}
-
-	sb.WriteString("\nPlease complete this task. When finished, provide a summary of what was done.\n")
-
-	return sb.String()
-}
-
-// processStreamEvent processes a single stream event, updating the token tracker
-// and capturing output.
-func (e *Executor) processStreamEvent(event StreamEvent, tracker *TokenTracker, output *strings.Builder) {
-	switch event.Type {
-	case StreamEventAssistant:
-		// Capture assistant messages as output
-		if event.Message != "" {
-			output.WriteString(event.Message)
-			output.WriteString("\n")
-		}
-
-	case StreamEventResult:
-		// Capture result messages
-		if event.Message != "" {
-			output.WriteString("\n--- Result ---\n")
-			output.WriteString(event.Message)
-			output.WriteString("\n")
-		}
-
-	case StreamEventError:
-		// Capture error messages
-		if event.Error != "" {
-			output.WriteString("\n--- Error ---\n")
-			output.WriteString(event.Error)
-			output.WriteString("\n")
-		}
-	}
-
-	// Try to extract token usage from raw JSON
-	if event.Raw != nil {
-		e.extractTokenUsage(event.Raw, tracker)
-	}
-}
-
-// extractTokenUsage attempts to extract token usage information from raw JSON.
-func (e *Executor) extractTokenUsage(raw json.RawMessage, tracker *TokenTracker) {
-	var data map[string]interface{}
-	if err := json.Unmarshal(raw, &data); err != nil {
-		return
-	}
-
-	// Look for usage field
-	usageData, ok := data["usage"].(map[string]interface{})
-	if !ok {
-		return
-	}
-
-	var usage MessageDeltaUsage
-
-	if input, ok := usageData["input_tokens"].(float64); ok {
-		usage.InputTokens = int64(input)
-	}
-	if output, ok := usageData["output_tokens"].(float64); ok {
-		usage.OutputTokens = int64(output)
-	}
-
-	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-		tracker.Update(usage)
-	}
-}
-
-// GetAgentManager returns the agent lifecycle manager.
-func (e *Executor) GetAgentManager() *Manager {
-	return e.agentMgr
-}
-
-// GetTokenTracker returns the aggregate token tracker.
-func (e *Executor) GetTokenTracker() *AggregateTracker {
-	return e.tokenTracker
-}
-
-// GetWorktreeManager returns the worktree manager.
-func (e *Executor) GetWorktreeManager() *WorktreeManager {
-	return e.worktreeMgr
-}
-
-// GetFailureAnalyzer returns the failure analyzer for extracting learnings.
-func (e *Executor) GetFailureAnalyzer() *learning.FailureAnalyzer {
-	return e.failureAnalyzer
-}
-
-// autoCommitChanges commits any uncommitted changes in the worktree.
-// This ensures agent changes are preserved when the worktree is removed.
-func (e *Executor) autoCommitChanges(worktreePath, taskTitle string) error {
-	// Check if there are any changes to commit
-	statusCmd := exec.Command("git", "status", "--porcelain")
-	statusCmd.Dir = worktreePath
-	statusOutput, err := statusCmd.Output()
-	if err != nil {
-		return fmt.Errorf("check git status: %w", err)
-	}
-
-	// No changes to commit
-	if len(statusOutput) == 0 {
-		return fmt.Errorf("no changes to commit")
-	}
-
-	// Stage all changes
-	addCmd := exec.Command("git", "add", "-A")
-	addCmd.Dir = worktreePath
-	if output, err := addCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git add: %s: %w", string(output), err)
-	}
-
-	// Commit with task title as message
-	commitMsg := fmt.Sprintf("Agent: %s", taskTitle)
-	commitCmd := exec.Command("git", "commit", "-m", commitMsg)
-	commitCmd.Dir = worktreePath
-	if output, err := commitCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git commit: %s: %w", string(output), err)
-	}
-
-	return nil
-}

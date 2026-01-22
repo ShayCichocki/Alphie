@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/shayc/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/agent"
 	"github.com/spf13/cobra"
 )
 

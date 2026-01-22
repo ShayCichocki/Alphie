@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/shayc/alphie/internal/prog"
+	"github.com/ShayCichocki/alphie/internal/prog"
 )
 
 // PlanResult contains the IDs of created prog items.

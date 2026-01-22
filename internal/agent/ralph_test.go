@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestNewCritiquePrompt_ThresholdClamping(t *testing.T) {
@@ -360,6 +360,7 @@ func TestThresholdForTier(t *testing.T) {
 }
 
 func TestMaxIterationsForTier(t *testing.T) {
+	// Updated values per plan: Scout skips ralph-loop (0), Builder=3, Architect=5
 	tests := []struct {
 		name string
 		tier models.Tier
@@ -368,22 +369,22 @@ func TestMaxIterationsForTier(t *testing.T) {
 		{
 			name: "Scout",
 			tier: models.TierScout,
-			want: 3,
+			want: 0, // Scout skips ralph-loop entirely
 		},
 		{
 			name: "Builder",
 			tier: models.TierBuilder,
-			want: 5,
+			want: 3,
 		},
 		{
 			name: "Architect",
 			tier: models.TierArchitect,
-			want: 7,
+			want: 5,
 		},
 		{
 			name: "Unknown",
 			tier: models.Tier("unknown"),
-			want: 5,
+			want: 3, // Default matches Builder
 		},
 	}
 

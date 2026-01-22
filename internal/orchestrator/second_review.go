@@ -6,15 +6,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/shayc/alphie/internal/agent"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/orchestrator/policy"
+	"github.com/ShayCichocki/alphie/internal/protect"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
-
-// LargeDiffThreshold is the number of lines at which a diff is considered large.
-const LargeDiffThreshold = 200
-
-// CrossCuttingThreshold is the number of packages at which changes are cross-cutting.
-const CrossCuttingThreshold = 3
 
 // ReviewTrigger contains information about why a second review was triggered.
 type ReviewTrigger struct {
@@ -36,15 +32,28 @@ type SecondReviewResult struct {
 
 // SecondReviewer triggers and coordinates second agent reviews for high-risk diffs.
 type SecondReviewer struct {
-	protected *ProtectedAreaDetector
-	claude    *agent.ClaudeProcess
+	protected *protect.Detector
+	// claude is the Claude runner for reviews.
+	// Can be either subprocess (ClaudeProcess) or direct API (ClaudeAPIAdapter).
+	claude agent.ClaudeRunner
+	// policy contains configurable review thresholds.
+	policy *policy.ReviewPolicy
 }
 
 // NewSecondReviewer creates a new SecondReviewer with the given dependencies.
-func NewSecondReviewer(protected *ProtectedAreaDetector, claude *agent.ClaudeProcess) *SecondReviewer {
+func NewSecondReviewer(protected *protect.Detector, claude agent.ClaudeRunner) *SecondReviewer {
+	return NewSecondReviewerWithPolicy(protected, claude, &policy.Default().Review)
+}
+
+// NewSecondReviewerWithPolicy creates a new SecondReviewer with custom policy.
+func NewSecondReviewerWithPolicy(protected *protect.Detector, claude agent.ClaudeRunner, p *policy.ReviewPolicy) *SecondReviewer {
+	if p == nil {
+		p = &policy.Default().Review
+	}
 	return &SecondReviewer{
 		protected: protected,
 		claude:    claude,
+		policy:    p,
 	}
 }
 
@@ -71,7 +80,7 @@ func (r *SecondReviewer) ShouldSecondReview(diff string, changedFiles []string, 
 	// Check for large diff
 	if r.isLargeDiff(diff) {
 		trigger.Triggered = true
-		trigger.Reasons = append(trigger.Reasons, fmt.Sprintf("large diff exceeds %d lines", LargeDiffThreshold))
+		trigger.Reasons = append(trigger.Reasons, fmt.Sprintf("large diff exceeds %d lines", r.policy.LargeDiffThreshold))
 	}
 
 	// Check for weak/absent tests
@@ -83,7 +92,7 @@ func (r *SecondReviewer) ShouldSecondReview(diff string, changedFiles []string, 
 	// Check for cross-cutting changes
 	if r.isCrossCutting(changedFiles) {
 		trigger.Triggered = true
-		trigger.Reasons = append(trigger.Reasons, fmt.Sprintf("cross-cutting changes affect >%d packages", CrossCuttingThreshold))
+		trigger.Reasons = append(trigger.Reasons, fmt.Sprintf("cross-cutting changes affect >%d packages", r.policy.CrossCuttingThreshold))
 	}
 
 	return trigger
@@ -106,7 +115,7 @@ func (r *SecondReviewer) touchesProtectedAreas(changedFiles []string) bool {
 // isLargeDiff checks if the diff exceeds the line threshold.
 func (r *SecondReviewer) isLargeDiff(diff string) bool {
 	lines := strings.Count(diff, "\n")
-	return lines > LargeDiffThreshold
+	return lines > r.policy.LargeDiffThreshold
 }
 
 // hasWeakTests checks if the changed files lack corresponding test coverage.
@@ -142,7 +151,7 @@ func (r *SecondReviewer) hasWeakTests(changedFiles []string) bool {
 	return false
 }
 
-// isCrossCutting checks if changes span more than CrossCuttingThreshold packages.
+// isCrossCutting checks if changes span more than the cross-cutting threshold packages.
 func (r *SecondReviewer) isCrossCutting(changedFiles []string) bool {
 	packages := make(map[string]bool)
 
@@ -153,7 +162,7 @@ func (r *SecondReviewer) isCrossCutting(changedFiles []string) bool {
 		}
 	}
 
-	return len(packages) > CrossCuttingThreshold
+	return len(packages) > r.policy.CrossCuttingThreshold
 }
 
 // RequestReview spawns a second Claude agent to review the diff.

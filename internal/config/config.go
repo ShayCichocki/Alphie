@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/viper"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // Config holds all configuration for Alphie.
@@ -142,9 +142,6 @@ func (tc *TierConfigs) Get(tier models.Tier) *TierConfig {
 	}
 }
 
-// globalViper is the viper instance used for configuration.
-var globalViper *viper.Viper
-
 // Load loads configuration from XDG paths, project overrides, and environment variables.
 // Precedence (highest to lowest):
 // 1. Environment variables (ANTHROPIC_API_KEY)
@@ -153,7 +150,6 @@ var globalViper *viper.Viper
 // 4. Built-in defaults
 func Load() (*Config, error) {
 	v := viper.New()
-	globalViper = v
 
 	// Set defaults
 	setDefaults(v)
@@ -205,7 +201,6 @@ func Load() (*Config, error) {
 // LoadFromPath loads configuration from a specific path (for testing).
 func LoadFromPath(path string) (*Config, error) {
 	v := viper.New()
-	globalViper = v
 
 	setDefaults(v)
 

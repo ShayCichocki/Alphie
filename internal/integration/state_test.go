@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shayc/alphie/internal/agent"
-	"github.com/shayc/alphie/internal/state"
+	"github.com/ShayCichocki/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/state"
 )
 
 // TestAgentStateTokenTracking tests the integration of agent state with token tracking.

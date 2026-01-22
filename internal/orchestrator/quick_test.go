@@ -7,10 +7,45 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/ShayCichocki/alphie/internal/agent"
 )
 
+// mockRunner implements agent.ClaudeRunner for testing
+type mockRunner struct {
+	outputCh chan agent.StreamEvent
+}
+
+func (m *mockRunner) Start(prompt, workDir string) error {
+	// Close the channel immediately so Execute() doesn't block
+	go func() { close(m.outputCh) }()
+	return nil
+}
+func (m *mockRunner) StartWithOptions(prompt, workDir string, opts *agent.StartOptions) error {
+	// Close the channel immediately so Execute() doesn't block
+	go func() { close(m.outputCh) }()
+	return nil
+}
+func (m *mockRunner) Output() <-chan agent.StreamEvent { return m.outputCh }
+func (m *mockRunner) Wait() error                      { return nil }
+func (m *mockRunner) Kill() error                      { return nil }
+func (m *mockRunner) Stderr() string                   { return "" }
+func (m *mockRunner) PID() int                         { return 0 }
+
+// mockRunnerFactory creates mock ClaudeRunner instances for testing
+type mockRunnerFactory struct{}
+
+func (f *mockRunnerFactory) NewRunner() agent.ClaudeRunner {
+	return &mockRunner{outputCh: make(chan agent.StreamEvent)}
+}
+
+// testFactory returns a factory for use in tests
+func testFactory() agent.ClaudeRunnerFactory {
+	return &mockRunnerFactory{}
+}
+
 func TestNewQuickExecutor(t *testing.T) {
-	executor := NewQuickExecutor("/tmp/test-repo")
+	executor := NewQuickExecutor("/tmp/test-repo", testFactory())
 
 	if executor == nil {
 		t.Fatal("NewQuickExecutor returned nil")
@@ -76,7 +111,7 @@ func TestAutoCommitChanges_NoChanges(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor := NewQuickExecutor(tmpDir)
+	executor := NewQuickExecutor(tmpDir, testFactory())
 	err = executor.autoCommitChanges("test task")
 
 	// Should return error about no changes
@@ -107,7 +142,7 @@ func TestAutoCommitChanges_WithChanges(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	executor := NewQuickExecutor(tmpDir)
+	executor := NewQuickExecutor(tmpDir, testFactory())
 	err = executor.autoCommitChanges("add test file")
 
 	if err != nil {
@@ -140,7 +175,7 @@ func TestAutoCommitChanges_InvalidRepo(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	executor := NewQuickExecutor(tmpDir)
+	executor := NewQuickExecutor(tmpDir, testFactory())
 	err = executor.autoCommitChanges("test task")
 
 	// Should fail because not a git repo
@@ -188,7 +223,7 @@ func TestAutoCommitChanges_StagedAndUnstagedChanges(t *testing.T) {
 		t.Fatalf("Failed to create file2: %v", err)
 	}
 
-	executor := NewQuickExecutor(tmpDir)
+	executor := NewQuickExecutor(tmpDir, testFactory())
 	err = executor.autoCommitChanges("update files")
 
 	if err != nil {
@@ -216,7 +251,7 @@ func TestQuickExecutor_Execute_ContextCancellation(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor := NewQuickExecutor(tmpDir)
+	executor := NewQuickExecutor(tmpDir, testFactory())
 
 	// Create already-cancelled context
 	ctx, cancel := context.WithCancel(context.Background())

@@ -28,6 +28,20 @@ func (s TaskStatus) Valid() bool {
 	}
 }
 
+// TaskType represents the classification of a task.
+type TaskType string
+
+const (
+	// TaskTypeSetup indicates setup/scaffolding work.
+	TaskTypeSetup TaskType = "SETUP"
+	// TaskTypeFeature indicates feature implementation.
+	TaskTypeFeature TaskType = "FEATURE"
+	// TaskTypeBugfix indicates bug fixing.
+	TaskTypeBugfix TaskType = "BUGFIX"
+	// TaskTypeRefactor indicates refactoring work.
+	TaskTypeRefactor TaskType = "REFACTOR"
+)
+
 // Task represents a unit of work in the system.
 type Task struct {
 	// ID is the unique identifier for this task.
@@ -40,6 +54,9 @@ type Task struct {
 	Description string `json:"description,omitempty"`
 	// AcceptanceCriteria defines the criteria for task completion.
 	AcceptanceCriteria string `json:"acceptance_criteria,omitempty"`
+	// VerificationIntent is the intent used to generate verification commands.
+	// This describes what the task should achieve in concrete terms.
+	VerificationIntent string `json:"verification_intent,omitempty"`
 	// Status is the current state of the task.
 	Status TaskStatus `json:"status"`
 	// DependsOn lists task IDs that must complete before this task.
@@ -48,10 +65,27 @@ type Task struct {
 	AssignedTo string `json:"assigned_to,omitempty"`
 	// Tier is the agent tier required for this task.
 	Tier Tier `json:"tier"`
+	// TaskType is the classification of this task (SETUP, FEATURE, BUGFIX, REFACTOR).
+	TaskType TaskType `json:"task_type,omitempty"`
+	// FileBoundaries are the files/directories this task is expected to modify.
+	// Used for conflict detection and scheduling.
+	FileBoundaries []string `json:"file_boundaries,omitempty"`
 	// CreatedAt is when the task was created.
 	CreatedAt time.Time `json:"created_at"`
 	// CompletedAt is when the task was completed, if applicable.
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	// Error contains the error message if the task failed.
+	Error string `json:"error,omitempty"`
+	// BlockedReason explains why the task is blocked (if Status == TaskStatusBlocked).
+	// Format: "dependency_failed:<task-id>" or "orphaned_by_crash"
+	BlockedReason string `json:"blocked_reason,omitempty"`
+	// ExecutionCount is the total number of times this task has been executed.
+	// This is incremented each time the task fails and is retried.
+	// Persisted across session recovery and used for:
+	// - Scout override unlocking (at 5 attempts)
+	// - Tracking task difficulty
+	// - Debugging stuck tasks
+	ExecutionCount int `json:"execution_count,omitempty"`
 }
 
 // RubricScore holds quality scores for completed work.

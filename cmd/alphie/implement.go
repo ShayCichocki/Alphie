@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/shayc/alphie/internal/architect"
-	"github.com/shayc/alphie/internal/tui"
+	"github.com/ShayCichocki/alphie/internal/architect"
+	"github.com/ShayCichocki/alphie/internal/tui"
 	"github.com/spf13/cobra"
 )
 

@@ -4,80 +4,43 @@ package orchestrator
 import (
 	"strings"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/protect"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
-
-// scoutKeywords are words that indicate lightweight tasks suitable for Scout tier.
-var scoutKeywords = []string{
-	"docs",
-	"readme",
-	"documentation",
-	"typo",
-	"formatting",
-	"comment",
-	"single-file",
-}
-
-// architectKeywords are words that indicate complex tasks requiring Architect tier.
-var architectKeywords = []string{
-	"migration",
-	"auth",
-	"authentication",
-	"security",
-	"infra",
-	"infrastructure",
-	"schema",
-	"database",
-}
 
 // TierSelector selects the appropriate tier based on task signals.
 type TierSelector struct {
-	scoutKeywords     []string
-	architectKeywords []string
-	protectedDetector *ProtectedAreaDetector
+	protectedDetector *protect.Detector
 }
 
-// NewTierSelector creates a new TierSelector with default keywords and
-// an optional ProtectedAreaDetector for detecting protected areas.
-func NewTierSelector(detector *ProtectedAreaDetector) *TierSelector {
+// NewTierSelector creates a new TierSelector with an optional
+// ProtectedAreaDetector for detecting protected areas.
+func NewTierSelector(detector *protect.Detector) *TierSelector {
 	return &TierSelector{
-		scoutKeywords:     append([]string{}, scoutKeywords...),
-		architectKeywords: append([]string{}, architectKeywords...),
 		protectedDetector: detector,
 	}
 }
 
 // SelectTier analyzes a task description and returns the appropriate tier.
-// It checks for:
-//  1. Scout keywords (docs, typo, formatting, etc.) -> Scout tier
-//  2. Architect keywords (migration, auth, infra, etc.) -> Architect tier
-//  3. Protected area references in the description -> Architect tier
-//  4. Default -> Builder tier
+// It uses the shared tier keywords from tier_keywords.go and checks for:
+//  1. Architect keywords (migration, auth, infra, etc.) -> Architect tier
+//  2. Protected area references in the description -> Architect tier
+//  3. Quick keywords (typo, rename) -> Quick tier
+//  4. Scout keywords (find, search, docs) -> Scout tier
+//  5. Default -> Builder tier
 func (s *TierSelector) SelectTier(taskDescription string) models.Tier {
-	lowerDesc := strings.ToLower(taskDescription)
-
-	// Check for architect keywords first (higher priority than scout).
-	for _, keyword := range s.architectKeywords {
-		if strings.Contains(lowerDesc, strings.ToLower(keyword)) {
-			return models.TierArchitect
-		}
+	// Check for architect keywords first (highest priority)
+	if IsArchitectKeyword(taskDescription) {
+		return models.TierArchitect
 	}
 
 	// Check for protected areas in the task description.
-	// This looks for file paths or patterns that match protected areas.
 	if s.protectedDetector != nil && s.containsProtectedReference(taskDescription) {
 		return models.TierArchitect
 	}
 
-	// Check for scout keywords.
-	for _, keyword := range s.scoutKeywords {
-		if strings.Contains(lowerDesc, strings.ToLower(keyword)) {
-			return models.TierScout
-		}
-	}
-
-	// Default to Builder tier.
-	return models.TierBuilder
+	// Use the shared classification for remaining tiers
+	return ClassifyTier(taskDescription)
 }
 
 // containsProtectedReference checks if the task description mentions
@@ -112,8 +75,15 @@ func (s *TierSelector) containsProtectedReference(taskDescription string) bool {
 
 // SelectTier is a convenience function that creates a TierSelector with
 // a ProtectedAreaDetector and returns the selected tier for the given task.
+//
+// Priority order (using shared keywords from tier_keywords.go):
+// 1. Architect keywords → TierArchitect
+// 2. Protected area references → TierArchitect
+// 3. Quick keywords → TierQuick
+// 4. Scout keywords → TierScout
+// 5. Default → TierBuilder
 func SelectTier(taskDescription string) models.Tier {
-	detector := NewProtectedAreaDetector()
+	detector := protect.New()
 	selector := NewTierSelector(detector)
 	return selector.SelectTier(taskDescription)
 }

@@ -9,9 +9,36 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shayc/alphie/internal/learning"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/learning"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
+
+// mockRunner implements ClaudeRunner for testing
+type mockRunner struct {
+	outputCh chan StreamEvent
+}
+
+func (m *mockRunner) Start(prompt, workDir string) error { return nil }
+func (m *mockRunner) StartWithOptions(prompt, workDir string, opts *StartOptions) error {
+	return nil
+}
+func (m *mockRunner) Output() <-chan StreamEvent { return m.outputCh }
+func (m *mockRunner) Wait() error                { return nil }
+func (m *mockRunner) Kill() error                { return nil }
+func (m *mockRunner) Stderr() string             { return "" }
+func (m *mockRunner) PID() int                   { return 0 }
+
+// mockRunnerFactory creates mock ClaudeRunner instances for testing
+type mockRunnerFactory struct{}
+
+func (f *mockRunnerFactory) NewRunner() ClaudeRunner {
+	return &mockRunner{outputCh: make(chan StreamEvent)}
+}
+
+// testRunnerFactory returns a factory for use in tests
+func testRunnerFactory() ClaudeRunnerFactory {
+	return &mockRunnerFactory{}
+}
 
 func TestNewExecutor(t *testing.T) {
 	// Create a temp directory for the test repo
@@ -27,8 +54,9 @@ func TestNewExecutor(t *testing.T) {
 	}
 
 	cfg := ExecutorConfig{
-		RepoPath: tmpDir,
-		Model:    "claude-sonnet-4-20250514",
+		RepoPath:      tmpDir,
+		Model:         "claude-sonnet-4-20250514",
+		RunnerFactory: testRunnerFactory(),
 	}
 
 	executor, err := NewExecutor(cfg)
@@ -65,7 +93,8 @@ func TestNewExecutor_DefaultModel(t *testing.T) {
 	}
 
 	cfg := ExecutorConfig{
-		RepoPath: tmpDir,
+		RepoPath:      tmpDir,
+		RunnerFactory: testRunnerFactory(),
 		// No model specified
 	}
 
@@ -166,7 +195,7 @@ func TestExecutor_BuildPrompt_Basic(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
+	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir, RunnerFactory: testRunnerFactory()})
 	if err != nil {
 		t.Fatalf("NewExecutor failed: %v", err)
 	}
@@ -200,7 +229,7 @@ func TestExecutor_BuildPrompt_WithDescription(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
+	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir, RunnerFactory: testRunnerFactory()})
 	if err != nil {
 		t.Fatalf("NewExecutor failed: %v", err)
 	}
@@ -229,7 +258,7 @@ func TestExecutor_BuildPrompt_TierGuidance(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
+	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir, RunnerFactory: testRunnerFactory()})
 	if err != nil {
 		t.Fatalf("NewExecutor failed: %v", err)
 	}
@@ -266,7 +295,7 @@ func TestExecutor_BuildPrompt_WithLearnings(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
+	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir, RunnerFactory: testRunnerFactory()})
 	if err != nil {
 		t.Fatalf("NewExecutor failed: %v", err)
 	}
@@ -307,7 +336,7 @@ func TestExecutor_ProcessStreamEvent_Assistant(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
+	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir, RunnerFactory: testRunnerFactory()})
 	if err != nil {
 		t.Fatalf("NewExecutor failed: %v", err)
 	}
@@ -338,7 +367,7 @@ func TestExecutor_ProcessStreamEvent_Result(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
+	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir, RunnerFactory: testRunnerFactory()})
 	if err != nil {
 		t.Fatalf("NewExecutor failed: %v", err)
 	}
@@ -372,7 +401,7 @@ func TestExecutor_ProcessStreamEvent_Error(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
+	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir, RunnerFactory: testRunnerFactory()})
 	if err != nil {
 		t.Fatalf("NewExecutor failed: %v", err)
 	}
@@ -406,7 +435,7 @@ func TestExecutor_ExtractTokenUsage(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
+	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir, RunnerFactory: testRunnerFactory()})
 	if err != nil {
 		t.Fatalf("NewExecutor failed: %v", err)
 	}
@@ -436,7 +465,7 @@ func TestExecutor_ExtractTokenUsage_NoUsage(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
+	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir, RunnerFactory: testRunnerFactory()})
 	if err != nil {
 		t.Fatalf("NewExecutor failed: %v", err)
 	}
@@ -463,7 +492,7 @@ func TestExecutor_ExtractTokenUsage_InvalidJSON(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
+	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir, RunnerFactory: testRunnerFactory()})
 	if err != nil {
 		t.Fatalf("NewExecutor failed: %v", err)
 	}
@@ -480,97 +509,6 @@ func TestExecutor_ExtractTokenUsage_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestExecutor_GetAgentManager(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "executor-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	if err := initTestGitRepo(tmpDir); err != nil {
-		t.Fatalf("Failed to init git repo: %v", err)
-	}
-
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
-	if err != nil {
-		t.Fatalf("NewExecutor failed: %v", err)
-	}
-
-	mgr := executor.GetAgentManager()
-	if mgr == nil {
-		t.Error("GetAgentManager should not return nil")
-	}
-	if mgr != executor.agentMgr {
-		t.Error("GetAgentManager should return the same instance")
-	}
-}
-
-func TestExecutor_GetTokenTracker(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "executor-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	if err := initTestGitRepo(tmpDir); err != nil {
-		t.Fatalf("Failed to init git repo: %v", err)
-	}
-
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
-	if err != nil {
-		t.Fatalf("NewExecutor failed: %v", err)
-	}
-
-	tracker := executor.GetTokenTracker()
-	if tracker == nil {
-		t.Error("GetTokenTracker should not return nil")
-	}
-}
-
-func TestExecutor_GetWorktreeManager(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "executor-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	if err := initTestGitRepo(tmpDir); err != nil {
-		t.Fatalf("Failed to init git repo: %v", err)
-	}
-
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
-	if err != nil {
-		t.Fatalf("NewExecutor failed: %v", err)
-	}
-
-	mgr := executor.GetWorktreeManager()
-	if mgr == nil {
-		t.Error("GetWorktreeManager should not return nil")
-	}
-}
-
-func TestExecutor_GetFailureAnalyzer(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "executor-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	if err := initTestGitRepo(tmpDir); err != nil {
-		t.Fatalf("Failed to init git repo: %v", err)
-	}
-
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
-	if err != nil {
-		t.Fatalf("NewExecutor failed: %v", err)
-	}
-
-	analyzer := executor.GetFailureAnalyzer()
-	if analyzer == nil {
-		t.Error("GetFailureAnalyzer should not return nil")
-	}
-}
-
 func TestExecutor_AutoCommitChanges_NoChanges(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "executor-test-*")
 	if err != nil {
@@ -582,7 +520,7 @@ func TestExecutor_AutoCommitChanges_NoChanges(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
+	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir, RunnerFactory: testRunnerFactory()})
 	if err != nil {
 		t.Fatalf("NewExecutor failed: %v", err)
 	}
@@ -608,7 +546,7 @@ func TestExecutor_AutoCommitChanges_WithChanges(t *testing.T) {
 		t.Fatalf("Failed to init git repo: %v", err)
 	}
 
-	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir})
+	executor, err := NewExecutor(ExecutorConfig{RepoPath: tmpDir, RunnerFactory: testRunnerFactory()})
 	if err != nil {
 		t.Fatalf("NewExecutor failed: %v", err)
 	}

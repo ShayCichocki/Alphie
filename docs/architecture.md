@@ -85,13 +85,14 @@ No user intervention needed. Alphie infers from task labels and complexity.
 
 ## 3. Ralph-Loop (Self-Improvement Cycle)
 
-**Purpose:** Quality refinement through self-critique
+**Purpose:** Quality refinement through self-critique with verification-aware governance
 
 **Entry:** Every task enters the loop after initial implementation
 
 **Mechanics:**
 - **Reviewer:** Same agent, critic prompt (single context, cost-efficient)
-- **Metric:** Structured rubric score
+- **Metric:** Structured rubric score + verification contract results
+- **Verification:** Intent-based contracts generated post-implementation
 
 | Criterion | Score Range | Description |
 |-----------|-------------|-------------|
@@ -106,17 +107,53 @@ No user intervention needed. Alphie infers from task labels and complexity.
 | Builder | 7/9 | Solid quality |
 | Architect | 8/9 | Excellence required |
 
+**Decision Matrix (with verification):**
+| Verification | Score | Action |
+|--------------|-------|--------|
+| PASS | >= threshold | EXIT SUCCESS |
+| PASS | >= threshold-1 | EXIT (acceptable) |
+| FAIL | any | Inject failure context, continue improving |
+| any | any | max iterations → EXIT with current status |
+
 **Exit Conditions:**
-1. Quality threshold met, OR
-2. Hidden max iterations reached (5-7)
+1. Verification passes AND quality threshold met
+2. Verification passes AND score is acceptable (threshold - 1)
+3. Agent outputs DONE marker AND verification passes (DONE is a request, not automatic exit)
+4. Hidden max iterations reached (3-7 depending on tier)
+
+**DONE Marker Validation:**
+When an agent outputs "DONE", it's requesting exit—not declaring it. Verification must still pass:
+- If verification passes: exit with reason "agent_done_verified"
+- If verification fails: continue improving with injected failure context
+
+**Clean Abort:** When max iterations reached without passing verification:
+- Task marked as failed (not merged)
+- Failure message includes verification summary
+- Orchestrator emits failure event
+- Work is NOT merged to session branch
 
 **Flow:**
 ```
-implement → self-critique (rubric) → improve → repeat
-                    ↓
-        threshold met OR max iterations
-                    ↓
-                  done
+task decomposition → generate VerificationIntent
+                              ↓
+            DraftContract() → store to .alphie/contracts/<id>-draft.json
+                              ↓
+                        agent implements
+                              ↓
+            RefineContract() → can only ADD checks (monotonic strengthening)
+                              ↓
+            store final to .alphie/contracts/<id>.json
+                              ↓
+                    run verification
+                              ↓
+               ┌──────────────┴──────────────┐
+               │                             │
+      PASS + threshold             FAIL or below threshold
+               │                             │
+               ▼                             ▼
+             done              inject context → critique → improve
+                                             │
+                                             └──────────→ repeat
 ```
 
 ---
@@ -349,7 +386,7 @@ No partial state. Atomic rollback.
 - [x] Lint clean
 - [x] Type check passes
 
-**Baseline Capture:** At session start, record which tests/lints currently fail.
+**Baseline Capture:** At session start, Alphie captures the current test/lint state and stores it in `.alphie/baselines/<session-id>.json`. This baseline is used throughout the session to detect regressions.
 
 **Strictness:** No regressions allowed (baseline-aware)
 
@@ -360,6 +397,27 @@ No partial state. Atomic rollback.
 | Worsening existing failures | Blocked (more failures than baseline = fail) |
 | Touch a component | Its focused tests must pass |
 | Gate not applicable | Skip (no tests = skip test gate) |
+
+**Baseline Integration with Quality Gates:**
+```go
+type BaselineComparison struct {
+    NewFailures      []string  // Failures not in baseline (agent's fault)
+    RegressionCount  int       // How many more failures than baseline
+    IsRegression     bool      // True if worse than baseline
+}
+
+// Gates now check against baseline, not just pass/fail
+comparison := CompareToBaseline(currentGateResults, sessionBaseline)
+if comparison.IsRegression {
+    task.Status = TaskStatusFailed
+}
+```
+
+**Pass/Fail Hierarchy:**
+Quality gates now actually block task completion (previously they only logged warnings). The hierarchy is:
+1. Safety constraints (protected areas, must_not_change) - immediate block
+2. Verification contract (task-specific checks) - retry with context
+3. Quality gates (baseline-aware test, build, lint) - fail if regression
 
 **Focused Test Selection Strategy:**
 
@@ -382,6 +440,125 @@ Default behavior:
 - Run focused tests after each agent completes
 - Run full suite once before creating PR to main
 - If focused tests find <5 tests, expand to package scope
+
+---
+
+## 8.5. Verification System
+
+**Purpose:** Ensure task completion matches intent through executable contracts
+
+The verification system bridges the gap between "task appears done" and "task actually works as intended." It provides concrete, executable verification of task outcomes.
+
+**Three-Phase Verification (Gaming Prevention):**
+
+| Phase | When | What |
+|-------|------|------|
+| Intent Capture | Task decomposition | Human-readable acceptance criteria in `task.VerificationIntent` |
+| Draft Contract | Pre-implementation | Generated BEFORE agent implements; establishes minimum requirements |
+| Refined Contract | Post-implementation | Can only ADD checks, never weaken the draft |
+
+**Why Pre-Implementation Contracts:**
+Generating contracts after seeing the implementation allows agents to create weak checks that rubber-stamp their work. Pre-implementation contracts set expectations based on intent, not outcomes.
+
+**Verification Contract Structure:**
+
+```go
+type VerificationContract struct {
+    // Intent is human-readable acceptance criteria (from decomposition)
+    Intent string `json:"intent"`
+
+    // Commands are concrete verification steps (generated post-implementation)
+    Commands []VerificationCommand `json:"commands,omitempty"`
+
+    // FileConstraints define what must/must-not exist or change
+    FileConstraints FileConstraints `json:"file_constraints,omitempty"`
+}
+
+type VerificationCommand struct {
+    Command     string        // e.g., "npm test -- --grep login"
+    Expect      string        // "exit 0", "output contains X"
+    Description string        // Human-readable explanation
+    Required    bool          // Hard requirement vs nice-to-have
+    Timeout     time.Duration // Max wait time (default 60s)
+}
+
+type FileConstraints struct {
+    MustExist     []string // Files that must exist after completion
+    MustNotExist  []string // Files that must NOT exist
+    MustNotChange []string // Files that must NOT be modified
+}
+```
+
+**Expectation Formats:**
+- `exit 0` - Command must exit with code 0
+- `exit N` - Command must exit with specific code N
+- `output contains X` - stdout must contain substring X
+
+**Contract Generation:**
+
+The `verification.Generator` uses Claude (via `PromptRunner` interface) to generate concrete verification commands based on:
+1. Task intent (from decomposition)
+2. Files modified during implementation
+3. Project context (Go, Node, Rust, Python)
+
+```go
+type PromptRunner interface {
+    RunPrompt(ctx context.Context, prompt string, workDir string) (string, error)
+}
+
+type Generator struct {
+    workDir      string
+    promptRunner PromptRunner
+}
+```
+
+**Project Type Detection:**
+
+```go
+func DetectProjectType(workDir string) ProjectType {
+    if fileExists(workDir, "go.mod") { return ProjectTypeGo }
+    if fileExists(workDir, "package.json") { return ProjectTypeNode }
+    if fileExists(workDir, "Cargo.toml") { return ProjectTypeRust }
+    if fileExists(workDir, "pyproject.toml") { return ProjectTypePython }
+    return ProjectTypeUnknown
+}
+```
+
+**Contract Execution:**
+
+The `ContractRunner` executes verification contracts:
+1. Run each verification command
+2. Check exit codes and output expectations
+3. Verify file constraints (must_exist, must_not_exist)
+4. Generate summary of results
+
+**Integration with Ralph-Loop:**
+
+When verification is enabled:
+1. After initial implementation, generate verification contract
+2. Before each critique iteration, run verification
+3. If verification fails, inject failure context into agent's output
+4. Agent sees what specifically failed and can fix it
+5. Only exit when verification passes OR max iterations reached
+
+**Clean Abort on Failure:**
+
+When max iterations reached without passing verification:
+```go
+if result.Success &&
+   strings.Contains(result.RalphLoopExitReason, "max_iterations_reached") &&
+   !result.VerificationPassed {
+    // Don't merge - task failed to meet requirements
+    task.Status = models.TaskStatusFailed
+    task.Error = fmt.Sprintf("Task aborted: max iterations reached (%d) without passing verification. %s",
+        result.RalphLoopIterations, result.VerificationSummary)
+    // Emit failure event, don't merge to session branch
+}
+```
+
+**Package Location:** `internal/verification/`
+- `contract.go` - Types and ContractRunner
+- `generator.go` - Generator with PromptRunner interface
 
 ---
 
@@ -481,13 +658,18 @@ questions_allowed: unlimited
 
 **Auto-Tier Selection:**
 
-| Task Signals | Auto-Tier |
-|--------------|-----------|
-| docs, formatting, single-file | Scout |
-| standard feature, tests | Builder (default) |
-| migrations, auth, infra, large diff forecast | Architect |
+Keywords are defined in a single source of truth (`internal/orchestrator/tier_keywords.go`):
+
+| Tier | Keywords |
+|------|----------|
+| Quick | typo, rename, fix typo, formatting, comment |
+| Scout | find, search, list, check, where, what, show, count, look, scan, locate, which, docs, readme, documentation |
+| Architect | refactor, redesign, migrate, rewrite, overhaul, restructure, auth, authentication, security, infra, schema, database |
+| Builder | Everything else (default) |
 
 User can always override with `--tier`.
+
+**Confidence Scoring:** Auto-tier selection includes a confidence score (0.0-1.0). If confidence is low, the system defaults to Builder tier and logs the uncertainty.
 
 ---
 
@@ -593,12 +775,26 @@ alphie/
 │   │   ├── agent.go             # Agent struct and lifecycle
 │   │   ├── claude.go            # Claude Code subprocess wrapper
 │   │   ├── worktree.go          # Git worktree management
-│   │   └── ralph.go             # Ralph-loop implementation
+│   │   ├── ralph_loop.go        # Ralph-loop implementation
+│   │   ├── executor.go          # Task executor with verification
+│   │   ├── prompt_runner.go     # ClaudePromptRunner adapter
+│   │   ├── gates.go             # Quality gate runners
+│   │   ├── baseline.go          # Baseline capture for regressions
+│   │   └── testselect.go        # Focused test selection
 │   ├── orchestrator/
 │   │   ├── orchestrator.go      # Main coordination logic
-│   │   ├── decomposer.go        # Task decomposition
-│   │   ├── scheduler.go         # Parallel task scheduling
-│   │   └── merger.go            # Merge conflict handling
+│   │   ├── decomposer.go        # Task decomposition (generates VerificationIntent)
+│   │   ├── scheduler.go         # Parallel task scheduling (marks dependents blocked)
+│   │   ├── tier_keywords.go     # Single source of truth for tier classification
+│   │   ├── tier_selector.go     # Auto-tier selection with confidence scoring
+│   │   ├── merger.go            # Merge conflict handling
+│   │   ├── semantic.go          # Semantic merge agent
+│   │   ├── collision.go         # Collision detection
+│   │   └── pkgmerge.go          # Package file merging
+│   ├── verification/
+│   │   ├── contract.go          # Verification types and runner
+│   │   ├── generator.go         # Contract generation (DraftContract, RefineContract)
+│   │   └── storage.go           # Contract persistence to .alphie/contracts/
 │   ├── tui/
 │   │   ├── app.go               # Bubbletea main model
 │   │   ├── tabs.go              # Tab navigation
@@ -616,12 +812,18 @@ alphie/
 │   ├── learning/
 │   │   ├── cao.go               # CAO triple parser
 │   │   ├── store.go             # Learning storage
-│   │   └── retrieval.go         # Learning retrieval
+│   │   ├── retrieval.go         # Learning retrieval
+│   │   └── lifecycle.go         # Learning decay/TTL
+│   ├── architect/               # Architecture implementation mode
+│   │   ├── controller.go        # Main implementation controller
+│   │   ├── auditor.go           # Architecture compliance auditor
+│   │   ├── planner.go           # Task planning from spec
+│   │   └── stopper.go           # Convergence detection
 │   └── prog/
 │       └── embed.go             # Embedded prog functionality
 ├── pkg/
 │   └── models/
-│       ├── task.go              # Task data model
+│       ├── task.go              # Task data model (with VerificationIntent)
 │       ├── agent.go             # Agent data model
 │       └── tier.go              # Tier configuration
 └── configs/
@@ -663,18 +865,61 @@ const (
 ### Task State
 ```go
 type Task struct {
-    ID          string
-    ParentID    string        // Epic ID if subtask
-    Title       string
-    Description string
-    Status      TaskStatus
-    DependsOn   []string      // Task IDs this blocks on
-    AssignedTo  string        // Agent ID
-    Tier        Tier
-    CreatedAt   time.Time
-    CompletedAt *time.Time
+    ID                 string
+    ParentID           string        // Epic ID if subtask
+    Title              string
+    Description        string
+    AcceptanceCriteria string        // Human-readable acceptance criteria
+    VerificationIntent string        // Intent for verification contract generation
+    Status             TaskStatus    // pending, in_progress, blocked, done, failed
+    DependsOn          []string      // Task IDs this blocks on
+    AssignedTo         string        // Agent ID
+    Tier               Tier
+    TaskType           TaskType      // SETUP, FEATURE, BUGFIX, REFACTOR
+    FileBoundaries     []string      // Expected files to modify (collision detection)
+    CreatedAt          time.Time
+    CompletedAt        *time.Time
+    Error              string        // Error message if failed
+    BlockedReason      string        // Why blocked: "dependency_failed:<task-id>" or "orphaned_by_crash"
+    ExecutionCount     int           // Total executions across all sessions (persisted)
 }
 ```
+
+### Task Status Transitions
+
+```
+pending ──────────► in_progress ──────────► done
+    │                    │
+    │                    ▼
+    │               verifying ────────► failed
+    │                    │                │
+    │                    │                ▼
+    └──────────────► blocked ◄────────────┘
+                   (dependency_failed)
+```
+
+**BlockedReason values:**
+- `dependency_failed:<task-id>` - Parent task failed, this task cannot proceed
+- `orphaned_by_crash` - Task was in_progress when system crashed
+
+### Counter Definitions
+
+Alphie uses several distinct counters. Each has a specific scope and purpose:
+
+| Counter | Scope | Purpose | Persisted |
+|---------|-------|---------|-----------|
+| `RalphIteration` | Per-execution | Self-critique loop step (0-N) | No |
+| `StartupRetry` | Per-execution | Claude CLI hang recovery (0-2) | No |
+| `Task.ExecutionCount` | Cross-session | Total times task has executed | Yes |
+
+**RalphIteration:** Counts iterations within a single Ralph-loop execution. Resets to 0 each time the task runs. Used to enforce max iterations per tier.
+
+**StartupRetry:** Internal to executor. Handles Claude CLI startup failures (hangs, crashes). Hidden from users. Maximum 2 retries before marking agent failed.
+
+**Task.ExecutionCount:** Persisted counter that survives session recovery. Incremented each time a task fails and is retried. Used for:
+- Scout override unlocking (at 5 attempts, Scout can ask questions)
+- Tracking task difficulty
+- Debugging stuck tasks
 
 ### Session State
 ```go

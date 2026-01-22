@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shayc/alphie/internal/learning"
+	"github.com/ShayCichocki/alphie/internal/learning"
 )
 
 // TestLearningStorageRetrievalCycle tests the full cycle of storing and retrieving learnings.

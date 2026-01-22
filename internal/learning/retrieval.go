@@ -264,10 +264,12 @@ func (r *Retriever) rankLearnings(learnings []*Learning) {
 //   - BM25 semantic relevance (primary signal, weighted heavily)
 //   - Trigger count (usage signal)
 //   - Recency factor (time decay, 7-day half-life)
+//   - Effectiveness factor (success rate, floor at 0.1 to allow recovery)
 //
-// Formula: (1 + BM25) * sqrt(1 + triggerCount) * recencyFactor
+// Formula: (1 + BM25) * sqrt(1 + triggerCount) * recencyFactor * effectivenessFactor
 // This ensures BM25 is the dominant ranking factor while still boosting
-// frequently used and recently triggered learnings.
+// frequently used, recently triggered, and effective learnings.
+// Ineffective learnings are downranked but not eliminated (0.1 floor).
 func (r *Retriever) calculateScore(l *Learning, now time.Time) float64 {
 	// BM25 semantic relevance score
 	bm25 := 0.0
@@ -292,9 +294,13 @@ func (r *Retriever) calculateScore(l *Learning, now time.Time) float64 {
 		recencyFactor = 1.0 / (1.0 + daysSinceTrigger/halfLife)
 	}
 
-	// Combined score: BM25 is primary, modulated by usage and recency
+	// Effectiveness factor: success rate with 0.1 floor to allow recovery
+	// New learnings (no uses yet) default to 1.0 effectiveness
+	effectivenessFactor := math.Max(0.1, l.Effectiveness)
+
+	// Combined score: BM25 is primary, modulated by usage, recency, and effectiveness
 	// Adding 1 to BM25 ensures non-matching docs still get ranked by other factors
-	return (1 + bm25) * triggerScore * recencyFactor
+	return (1 + bm25) * triggerScore * recencyFactor * effectivenessFactor
 }
 
 // extractPathPrefix extracts a meaningful path prefix from a file path.

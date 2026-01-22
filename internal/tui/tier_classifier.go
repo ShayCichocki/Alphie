@@ -3,23 +3,13 @@ package tui
 import (
 	"strings"
 
-	"github.com/shayc/alphie/pkg/models"
-)
-
-var (
-	scoutKeywords = []string{
-		"find", "search", "list", "check", "where", "what",
-		"show", "count", "look", "scan", "locate", "which",
-	}
-	architectKeywords = []string{
-		"refactor", "redesign", "architect", "migrate", "rewrite",
-		"overhaul", "restructure", "reorganize", "rearchitect",
-	}
+	"github.com/ShayCichocki/alphie/internal/orchestrator"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // ClassifyTier determines the appropriate tier for a task based on its text.
 // It checks for explicit prefixes (!quick, !scout, !builder, !architect) first,
-// then falls back to keyword matching.
+// then falls back to keyword matching using the shared tier keywords.
 // Returns the tier and the task text with any prefix stripped.
 func ClassifyTier(taskText string) (models.Tier, string) {
 	text := strings.TrimSpace(taskText)
@@ -38,22 +28,7 @@ func ClassifyTier(taskText string) (models.Tier, string) {
 		return models.TierArchitect, strings.TrimPrefix(text, "!architect ")
 	}
 
-	lower := strings.ToLower(text)
-
-	// Check for architect keywords first (more specific)
-	for _, kw := range architectKeywords {
-		if strings.Contains(lower, kw) {
-			return models.TierArchitect, text
-		}
-	}
-
-	// Check for scout keywords
-	for _, kw := range scoutKeywords {
-		if strings.Contains(lower, kw) {
-			return models.TierScout, text
-		}
-	}
-
-	// Default to builder
-	return models.TierBuilder, text
+	// Use shared tier keywords for classification
+	tier := orchestrator.ClassifyTier(text)
+	return tier, text
 }

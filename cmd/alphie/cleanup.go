@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shayc/alphie/internal/agent"
-	"github.com/shayc/alphie/internal/state"
+	"github.com/ShayCichocki/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/state"
 	"github.com/spf13/cobra"
 )
 

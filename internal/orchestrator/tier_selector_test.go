@@ -3,24 +3,51 @@ package orchestrator
 import (
 	"testing"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/protect"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
-func TestSelectTier_ScoutKeywords(t *testing.T) {
+func TestSelectTier_QuickKeywords(t *testing.T) {
+	// Quick keywords are simple tasks that don't need decomposition
 	tests := []struct {
 		name        string
 		description string
 		want        models.Tier
 	}{
+		{"typo keyword", "Fix typo in error message", models.TierQuick},
+		{"rename keyword", "Rename the function to be clearer", models.TierQuick},
+		{"formatting keyword", "Apply code formatting to utils package", models.TierQuick},
+		{"comment keyword", "Add comment to explain the algorithm", models.TierQuick},
+		{"mixed case typo", "Fix Typo in the codebase", models.TierQuick},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			selector := NewTierSelector(nil)
+			got := selector.SelectTier(tt.description)
+			if got != tt.want {
+				t.Errorf("SelectTier(%q) = %v, want %v", tt.description, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSelectTier_ScoutKeywords(t *testing.T) {
+	// Scout keywords are for exploration and research tasks
+	tests := []struct {
+		name        string
+		description string
+		want        models.Tier
+	}{
+		{"find keyword", "Find the login handler", models.TierScout},
+		{"search keyword", "Search for API endpoints", models.TierScout},
+		{"list keyword", "List all user models", models.TierScout},
+		{"check keyword", "Check if tests pass", models.TierScout},
 		{"docs keyword", "Update the docs for the API", models.TierScout},
-		{"readme keyword", "Fix typos in README", models.TierScout},
 		{"documentation keyword", "Add documentation for the new feature", models.TierScout},
-		{"typo keyword", "Fix typo in error message", models.TierScout},
-		{"formatting keyword", "Apply code formatting to utils package", models.TierScout},
-		{"comment keyword", "Add comment to explain the algorithm", models.TierScout},
-		{"single-file keyword", "Make a single-file change to config", models.TierScout},
-		{"uppercase docs", "Update DOCS for API", models.TierScout},
-		{"mixed case typo", "Fix Typo in the codebase", models.TierScout},
+		{"readme keyword", "Check the README for instructions", models.TierScout},
+		{"what keyword", "What is the config format", models.TierScout},
+		{"where keyword", "Where are errors handled", models.TierScout},
 	}
 
 	for _, tt := range tests {
@@ -93,7 +120,6 @@ func TestSelectTier_DefaultToBuilder(t *testing.T) {
 		want        models.Tier
 	}{
 		{"generic task", "Add new feature to handle user input", models.TierBuilder},
-		{"refactoring", "Refactor the parser module", models.TierBuilder},
 		{"tests", "Add unit tests for the service", models.TierBuilder},
 		{"bug fix", "Fix bug in file upload handler", models.TierBuilder},
 		{"empty string", "", models.TierBuilder},
@@ -111,7 +137,7 @@ func TestSelectTier_DefaultToBuilder(t *testing.T) {
 }
 
 func TestSelectTier_WithProtectedAreaDetector(t *testing.T) {
-	detector := NewProtectedAreaDetector()
+	detector := protect.New()
 	selector := NewTierSelector(detector)
 
 	tests := []struct {
@@ -146,7 +172,8 @@ func TestSelectTier_ConvenienceFunction(t *testing.T) {
 		description string
 		want        models.Tier
 	}{
-		{"scout", "Fix typo in README", models.TierScout},
+		{"quick", "Fix typo in the code", models.TierQuick},
+		{"scout", "Find all API endpoints", models.TierScout},
 		{"architect", "Add database migration", models.TierArchitect},
 		{"builder", "Implement new feature", models.TierBuilder},
 	}

@@ -5,13 +5,14 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/ShayCichocki/alphie/internal/git"
 )
 
 // Worktree represents a git worktree managed by Alphie.
@@ -22,10 +23,41 @@ type Worktree struct {
 	CreatedAt  time.Time // When the worktree was created
 }
 
+// WorktreeProvider defines the interface for worktree management.
+// This interface allows mocking worktree operations in tests.
+type WorktreeProvider interface {
+	// Create creates a new worktree for the given agent.
+	Create(agentID string) (*Worktree, error)
+	// Remove removes a worktree at the given path.
+	Remove(path string, force bool) error
+	// Unlock unlocks a locked worktree.
+	Unlock(path string) error
+	// List returns all worktrees managed by this repository.
+	List() ([]*Worktree, error)
+	// Prune removes references to worktrees that no longer exist on disk.
+	Prune() error
+	// RecoverOrphaned finds and removes orphaned worktrees.
+	RecoverOrphaned() ([]string, error)
+	// ListOrphans returns a list of orphaned worktrees.
+	ListOrphans(activeSessions []string) ([]*Worktree, error)
+	// CleanupOrphans removes orphaned worktrees and returns the count of removed.
+	CleanupOrphans(activeSessions []string, verbose func(path string)) (int, error)
+	// StartupCleanup performs orphan detection and cleanup at startup.
+	StartupCleanup(activeSessions []string) (int, error)
+	// BaseDir returns the base directory where worktrees are created.
+	BaseDir() string
+	// RepoPath returns the path to the main git repository.
+	RepoPath() string
+}
+
+// Verify WorktreeManager implements WorktreeProvider at compile time.
+var _ WorktreeProvider = (*WorktreeManager)(nil)
+
 // WorktreeManager handles git worktree operations for agent isolation.
 type WorktreeManager struct {
 	baseDir  string // Base directory for worktrees (e.g., ~/.cache/alphie/worktrees)
 	repoPath string // Path to the main git repository
+	git      git.Runner
 	mu       sync.Mutex
 }
 
@@ -49,6 +81,29 @@ func NewWorktreeManager(baseDir, repoPath string) (*WorktreeManager, error) {
 	return &WorktreeManager{
 		baseDir:  baseDir,
 		repoPath: repoPath,
+		git:      git.NewRunner(repoPath),
+	}, nil
+}
+
+// NewWorktreeManagerWithRunner creates a new WorktreeManager with a custom git runner (for testing).
+func NewWorktreeManagerWithRunner(baseDir, repoPath string, runner git.Runner) (*WorktreeManager, error) {
+	if baseDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("get home directory: %w", err)
+		}
+		baseDir = filepath.Join(home, ".cache", "alphie", "worktrees")
+	}
+
+	// Ensure base directory exists
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return nil, fmt.Errorf("create worktree base directory: %w", err)
+	}
+
+	return &WorktreeManager{
+		baseDir:  baseDir,
+		repoPath: repoPath,
+		git:      runner,
 	}, nil
 }
 
@@ -66,11 +121,8 @@ func (m *WorktreeManager) Create(agentID string) (*Worktree, error) {
 	worktreePath := filepath.Join(m.baseDir, branchName)
 
 	// Create the worktree with a new branch
-	cmd := exec.Command("git", "worktree", "add", worktreePath, "-b", branchName)
-	cmd.Dir = m.repoPath
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("create worktree: %s: %w", string(output), err)
+	if err := m.git.WorktreeAddNewBranch(worktreePath, branchName); err != nil {
+		return nil, fmt.Errorf("create worktree: %w", err)
 	}
 
 	return &Worktree{
@@ -87,17 +139,8 @@ func (m *WorktreeManager) Remove(path string, force bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	args := []string{"worktree", "remove"}
-	if force {
-		args = append(args, "-f")
-	}
-	args = append(args, path)
-
-	cmd := exec.Command("git", args...)
-	cmd.Dir = m.repoPath
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("remove worktree: %s: %w", string(output), err)
+	if err := m.git.WorktreeRemoveOptionalForce(path, force); err != nil {
+		return fmt.Errorf("remove worktree: %w", err)
 	}
 
 	return nil
@@ -108,11 +151,8 @@ func (m *WorktreeManager) Unlock(path string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cmd := exec.Command("git", "worktree", "unlock", path)
-	cmd.Dir = m.repoPath
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("unlock worktree: %s: %w", string(output), err)
+	if err := m.git.WorktreeUnlock(path); err != nil {
+		return fmt.Errorf("unlock worktree: %w", err)
 	}
 
 	return nil
@@ -123,14 +163,12 @@ func (m *WorktreeManager) List() ([]*Worktree, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cmd := exec.Command("git", "worktree", "list", "--porcelain")
-	cmd.Dir = m.repoPath
-	output, err := cmd.CombinedOutput()
+	output, err := m.git.WorktreeListPorcelain()
 	if err != nil {
-		return nil, fmt.Errorf("list worktrees: %s: %w", string(output), err)
+		return nil, fmt.Errorf("list worktrees: %w", err)
 	}
 
-	return m.parseWorktreeList(string(output))
+	return m.parseWorktreeList(output)
 }
 
 // parseWorktreeList parses the output of 'git worktree list --porcelain'.
@@ -183,11 +221,8 @@ func (m *WorktreeManager) Prune() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cmd := exec.Command("git", "worktree", "prune", "--expire", "now")
-	cmd.Dir = m.repoPath
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("prune worktrees: %s: %w", string(output), err)
+	if err := m.git.WorktreePruneExpireNow(); err != nil {
+		return fmt.Errorf("prune worktrees: %w", err)
 	}
 
 	return nil
@@ -201,22 +236,18 @@ func (m *WorktreeManager) RecoverOrphaned() ([]string, error) {
 	defer m.mu.Unlock()
 
 	// First prune any that git knows about but don't exist
-	pruneCmd := exec.Command("git", "worktree", "prune", "--expire", "now")
-	pruneCmd.Dir = m.repoPath
-	if output, err := pruneCmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("prune worktrees: %s: %w", string(output), err)
+	if err := m.git.WorktreePruneExpireNow(); err != nil {
+		return nil, fmt.Errorf("prune worktrees: %w", err)
 	}
 
 	// Get list of worktrees known to git
-	listCmd := exec.Command("git", "worktree", "list", "--porcelain")
-	listCmd.Dir = m.repoPath
-	output, err := listCmd.CombinedOutput()
+	output, err := m.git.WorktreeListPorcelain()
 	if err != nil {
-		return nil, fmt.Errorf("list worktrees: %s: %w", string(output), err)
+		return nil, fmt.Errorf("list worktrees: %w", err)
 	}
 
 	knownPaths := make(map[string]bool)
-	worktrees, err := m.parseWorktreeListUnlocked(string(output))
+	worktrees, err := m.parseWorktreeListUnlocked(output)
 	if err != nil {
 		return nil, err
 	}
@@ -241,25 +272,22 @@ func (m *WorktreeManager) RecoverOrphaned() ([]string, error) {
 
 		path := filepath.Join(m.baseDir, entry.Name())
 		if knownPaths[path] {
-			// Try to unlock in case it's locked
-			unlockCmd := exec.Command("git", "worktree", "unlock", path)
-			unlockCmd.Dir = m.repoPath
-			_ = unlockCmd.Run() // Ignore errors, it may not be locked
+			// Git knows about this worktree - leave it alone.
+			// It's being tracked and may be in active use.
+			continue
+		}
 
-			// Force remove it
-			removeCmd := exec.Command("git", "worktree", "remove", "-f", path)
-			removeCmd.Dir = m.repoPath
-			if _, err := removeCmd.CombinedOutput(); err != nil {
+		// Orphan directory - git doesn't know about it.
+		// Try to remove it as a worktree first (in case git lost track but it's still valid)
+		_ = m.git.WorktreeUnlock(path) // Ignore errors, it may not be locked
+
+		if err := m.git.WorktreeRemove(path); err != nil {
+			// Git worktree remove failed, try direct removal
+			if err := os.RemoveAll(path); err != nil {
 				continue // Skip if we can't remove it
 			}
-			recovered = append(recovered, path)
-		} else {
-			// Unknown directory, just remove it directly
-			if err := os.RemoveAll(path); err != nil {
-				continue
-			}
-			recovered = append(recovered, path)
 		}
+		recovered = append(recovered, path)
 	}
 
 	return recovered, nil
@@ -352,14 +380,12 @@ func (m *WorktreeManager) ListOrphans(activeSessions []string) ([]*Worktree, err
 	defer m.mu.Unlock()
 
 	// Get all worktrees
-	cmd := exec.Command("git", "worktree", "list", "--porcelain")
-	cmd.Dir = m.repoPath
-	output, err := cmd.CombinedOutput()
+	output, err := m.git.WorktreeListPorcelain()
 	if err != nil {
-		return nil, fmt.Errorf("list worktrees: %s: %w", string(output), err)
+		return nil, fmt.Errorf("list worktrees: %w", err)
 	}
 
-	worktrees, err := m.parseWorktreeListUnlocked(string(output))
+	worktrees, err := m.parseWorktreeListUnlocked(output)
 	if err != nil {
 		return nil, err
 	}
@@ -421,14 +447,10 @@ func (m *WorktreeManager) CleanupOrphans(activeSessions []string, verbose func(p
 	removed := 0
 	for _, wt := range orphans {
 		// Try to unlock in case it's locked
-		unlockCmd := exec.Command("git", "worktree", "unlock", wt.Path)
-		unlockCmd.Dir = m.repoPath
-		_ = unlockCmd.Run() // Ignore errors, it may not be locked
+		_ = m.git.WorktreeUnlock(wt.Path) // Ignore errors, it may not be locked
 
 		// Force remove the worktree
-		removeCmd := exec.Command("git", "worktree", "remove", "-f", wt.Path)
-		removeCmd.Dir = m.repoPath
-		if _, err := removeCmd.CombinedOutput(); err != nil {
+		if err := m.git.WorktreeRemove(wt.Path); err != nil {
 			// If git worktree remove fails, try removing the directory directly
 			if err := os.RemoveAll(wt.Path); err != nil {
 				continue // Skip if we can't remove it
@@ -442,12 +464,7 @@ func (m *WorktreeManager) CleanupOrphans(activeSessions []string, verbose func(p
 	}
 
 	// Final prune to clean up any dangling references
-	pruneCmd := exec.Command("git", "worktree", "prune", "--expire", "now")
-	pruneCmd.Dir = m.repoPath
-	if _, err := pruneCmd.CombinedOutput(); err != nil {
-		// Log but don't fail on prune errors
-		// The worktrees have already been removed
-	}
+	_ = m.git.WorktreePruneExpireNow() // Ignore errors, worktrees already removed
 
 	return removed, nil
 }

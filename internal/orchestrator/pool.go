@@ -2,17 +2,18 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 
 	"github.com/google/uuid"
 
-	"github.com/shayc/alphie/internal/agent"
-	"github.com/shayc/alphie/internal/config"
-	"github.com/shayc/alphie/internal/learning"
-	"github.com/shayc/alphie/internal/prog"
-	"github.com/shayc/alphie/internal/state"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/config"
+	"github.com/ShayCichocki/alphie/internal/learning"
+	"github.com/ShayCichocki/alphie/internal/prog"
+	"github.com/ShayCichocki/alphie/internal/state"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // PoolConfig contains configuration options for the OrchestratorPool.
@@ -21,9 +22,12 @@ type PoolConfig struct {
 	TierConfigs    *config.TierConfigs
 	Greenfield     bool
 	Executor       *agent.Executor
-	StateDB        *state.DB
-	LearningSystem *learning.LearningSystem
-	ProgClient     *prog.Client
+	StateDB        state.StateStore
+	LearningSystem learning.LearningProvider
+	ProgClient     prog.ProgTracker
+	// RunnerFactory creates ClaudeRunner instances via the Anthropic API.
+	// Required - must be set before calling Submit.
+	RunnerFactory agent.ClaudeRunnerFactory
 }
 
 // OrchestratorPool manages multiple concurrent orchestrators.
@@ -61,27 +65,41 @@ func NewOrchestratorPool(cfg PoolConfig) *OrchestratorPool {
 // Submit creates and starts a new orchestrator for the given task.
 // Returns the orchestrator ID.
 func (p *OrchestratorPool) Submit(task string, tier models.Tier) (string, error) {
+	return p.SubmitWithID(task, tier, "")
+}
+
+// SubmitWithID creates and starts a new orchestrator for the given task.
+// The originalTaskID is used to link TUI task_entered events with epic_created events.
+// Returns the orchestrator ID.
+func (p *OrchestratorPool) SubmitWithID(task string, tier models.Tier, originalTaskID string) (string, error) {
 	orchID := uuid.New().String()[:8]
 
-	// Create Claude processes for this orchestrator
-	decomposerClaude := agent.NewClaudeProcess(p.ctx)
-	mergerClaude := agent.NewClaudeProcess(p.ctx)
-
-	// Create orchestrator config
-	orchCfg := OrchestratorConfig{
-		RepoPath:         p.cfg.RepoPath,
-		Tier:             tier,
-		TierConfigs:      p.cfg.TierConfigs,
-		Greenfield:       p.cfg.Greenfield,
-		DecomposerClaude: decomposerClaude,
-		MergerClaude:     mergerClaude,
-		Executor:         p.cfg.Executor,
-		StateDB:          p.cfg.StateDB,
-		LearningSystem:   p.cfg.LearningSystem,
-		ProgClient:       p.cfg.ProgClient,
+	// Require runner factory
+	if p.cfg.RunnerFactory == nil {
+		return "", fmt.Errorf("RunnerFactory is required")
 	}
 
-	orch := NewOrchestrator(orchCfg)
+	// Create Claude runners for this orchestrator
+	decomposerClaude := p.cfg.RunnerFactory.NewRunner()
+	mergerClaude := p.cfg.RunnerFactory.NewRunner()
+
+	// Create orchestrator using functional options
+	orch := New(
+		RequiredConfig{
+			RepoPath: p.cfg.RepoPath,
+			Tier:     tier,
+			Executor: p.cfg.Executor,
+		},
+		WithTierConfigs(p.cfg.TierConfigs),
+		WithGreenfield(p.cfg.Greenfield),
+		WithDecomposerClaude(decomposerClaude),
+		WithMergerClaude(mergerClaude),
+		WithRunnerFactory(p.cfg.RunnerFactory),
+		WithStateDB(p.cfg.StateDB),
+		WithLearningSystem(p.cfg.LearningSystem),
+		WithProgClient(p.cfg.ProgClient),
+		WithOriginalTaskID(originalTaskID),
+	)
 
 	p.mu.Lock()
 	p.orchestrators[orchID] = orch

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shayc/alphie/internal/config"
+	"github.com/ShayCichocki/alphie/internal/config"
 	"github.com/spf13/cobra"
 )
 

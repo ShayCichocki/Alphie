@@ -445,32 +445,36 @@ func TestRetriever_calculateScore(t *testing.T) {
 			learning: &Learning{
 				TriggerCount:  10,
 				LastTriggered: now.Add(-1 * time.Hour),
+				Effectiveness: 1.0, // Default effectiveness for new learnings
 			},
-			wantGT: 3.0, // sqrt(11) * ~1.0 recency = ~3.3
+			wantGT: 3.0, // sqrt(11) * ~1.0 recency * 1.0 effectiveness = ~3.3
 		},
 		{
 			name: "low trigger count, recent",
 			learning: &Learning{
 				TriggerCount:  1,
 				LastTriggered: now.Add(-1 * time.Hour),
+				Effectiveness: 1.0,
 			},
-			wantGT: 1.0, // sqrt(2) * ~1.0 recency = ~1.4
+			wantGT: 1.0, // sqrt(2) * ~1.0 recency * 1.0 effectiveness = ~1.4
 		},
 		{
 			name: "high trigger count, old",
 			learning: &Learning{
 				TriggerCount:  10,
 				LastTriggered: now.Add(-30 * 24 * time.Hour),
+				Effectiveness: 1.0,
 			},
-			wantGT: 0.5, // sqrt(11) * ~0.19 recency = ~0.63
+			wantGT: 0.5, // sqrt(11) * ~0.19 recency * 1.0 effectiveness = ~0.63
 		},
 		{
 			name: "zero trigger count",
 			learning: &Learning{
 				TriggerCount:  0,
 				LastTriggered: now,
+				Effectiveness: 1.0,
 			},
-			wantGT: 0.5, // sqrt(1) * 1.0 recency = 1.0
+			wantGT: 0.5, // sqrt(1) * 1.0 recency * 1.0 effectiveness = 1.0
 		},
 	}
 

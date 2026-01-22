@@ -3,7 +3,8 @@ package orchestrator
 import (
 	"testing"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/internal/protect"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestScoutOverrideGate_DefaultConfig(t *testing.T) {
@@ -56,7 +57,7 @@ func TestScoutOverrideGate_BlockedAfterN(t *testing.T) {
 }
 
 func TestScoutOverrideGate_ProtectedArea(t *testing.T) {
-	detector := NewProtectedAreaDetector()
+	detector := protect.New()
 	gate := NewScoutOverrideGate(detector, ScoutOverrideConfig{
 		BlockedAfterNAttempts: 5,
 		ProtectedAreaDetected: true,
@@ -89,7 +90,7 @@ func TestScoutOverrideGate_ProtectedArea(t *testing.T) {
 }
 
 func TestScoutOverrideGate_ProtectedAreaDisabled(t *testing.T) {
-	detector := NewProtectedAreaDetector()
+	detector := protect.New()
 	gate := NewScoutOverrideGate(detector, ScoutOverrideConfig{
 		BlockedAfterNAttempts: 5,
 		ProtectedAreaDetected: false, // Disabled
@@ -137,7 +138,7 @@ func TestScoutOverrideGate_Reset(t *testing.T) {
 }
 
 func TestScoutOverrideGate_GettersAndSetters(t *testing.T) {
-	detector := NewProtectedAreaDetector()
+	detector := protect.New()
 	gate := NewScoutOverrideGate(detector, ScoutOverrideConfig{
 		BlockedAfterNAttempts: 7,
 		ProtectedAreaDetected: true,

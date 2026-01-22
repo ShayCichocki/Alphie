@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestNewCollisionChecker(t *testing.T) {
@@ -17,12 +17,7 @@ func TestNewCollisionChecker(t *testing.T) {
 func TestCollisionCheckerRegisterUnregister(t *testing.T) {
 	cc := NewCollisionChecker()
 
-	hints := &SchedulerHint{
-		PathPrefixes: []string{"internal/auth/"},
-		Hotspots:     []string{},
-	}
-
-	cc.RegisterAgent("agent-1", hints)
+	cc.RegisterAgent("agent-1", []string{"internal/auth/"}, nil)
 
 	// Unregister should not panic
 	cc.UnregisterAgent("agent-1")
@@ -32,11 +27,7 @@ func TestCollisionCheckerRegisterUnregister(t *testing.T) {
 func TestCollisionCheckerRecordTouch(t *testing.T) {
 	cc := NewCollisionChecker()
 
-	hints := &SchedulerHint{
-		PathPrefixes: []string{"internal/auth/"},
-		Hotspots:     []string{},
-	}
-	cc.RegisterAgent("agent-1", hints)
+	cc.RegisterAgent("agent-1", []string{"internal/auth/"}, nil)
 
 	// Touch a file 4 times (exceeds hotspotThreshold of 3)
 	for i := 0; i < 4; i++ {
@@ -56,10 +47,7 @@ func TestCollisionCheckerRecordTouch(t *testing.T) {
 func TestCollisionCheckerHotspotThreshold(t *testing.T) {
 	cc := NewCollisionChecker()
 
-	hints := &SchedulerHint{
-		PathPrefixes: []string{"internal/"},
-	}
-	cc.RegisterAgent("agent-1", hints)
+	cc.RegisterAgent("agent-1", []string{"internal/"}, nil)
 
 	// Touch exactly at threshold (3 times) - should not be hotspot yet
 	for i := 0; i < 3; i++ {
@@ -83,10 +71,7 @@ func TestCollisionCheckerPathPrefixCollision(t *testing.T) {
 	cc := NewCollisionChecker()
 
 	// Agent working in internal/auth/
-	hints := &SchedulerHint{
-		PathPrefixes: []string{"internal/auth/"},
-	}
-	cc.RegisterAgent("agent-1", hints)
+	cc.RegisterAgent("agent-1", []string{"internal/auth/"}, nil)
 
 	runningAgents := []*models.Agent{
 		{ID: "agent-1", Status: models.AgentStatusRunning},
@@ -109,10 +94,7 @@ func TestCollisionCheckerNoPathPrefixCollision(t *testing.T) {
 	cc := NewCollisionChecker()
 
 	// Agent working in internal/auth/
-	hints := &SchedulerHint{
-		PathPrefixes: []string{"internal/auth/"},
-	}
-	cc.RegisterAgent("agent-1", hints)
+	cc.RegisterAgent("agent-1", []string{"internal/auth/"}, nil)
 
 	runningAgents := []*models.Agent{
 		{ID: "agent-1", Status: models.AgentStatusRunning},
@@ -135,10 +117,7 @@ func TestCollisionCheckerPrefixContainment(t *testing.T) {
 	cc := NewCollisionChecker()
 
 	// Agent working in broader internal/ prefix
-	hints := &SchedulerHint{
-		PathPrefixes: []string{"internal/"},
-	}
-	cc.RegisterAgent("agent-1", hints)
+	cc.RegisterAgent("agent-1", []string{"internal/"}, nil)
 
 	runningAgents := []*models.Agent{
 		{ID: "agent-1", Status: models.AgentStatusRunning},
@@ -161,10 +140,7 @@ func TestCollisionCheckerReversePrefixContainment(t *testing.T) {
 	cc := NewCollisionChecker()
 
 	// Agent working in narrow internal/auth/ prefix
-	hints := &SchedulerHint{
-		PathPrefixes: []string{"internal/auth/"},
-	}
-	cc.RegisterAgent("agent-1", hints)
+	cc.RegisterAgent("agent-1", []string{"internal/auth/"}, nil)
 
 	runningAgents := []*models.Agent{
 		{ID: "agent-1", Status: models.AgentStatusRunning},
@@ -187,11 +163,7 @@ func TestCollisionCheckerHotspotCollision(t *testing.T) {
 	cc := NewCollisionChecker()
 
 	// Agent has a hotspot file
-	hints := &SchedulerHint{
-		PathPrefixes: []string{"internal/auth/"},
-		Hotspots:     []string{"internal/auth/auth.go"},
-	}
-	cc.RegisterAgent("agent-1", hints)
+	cc.RegisterAgent("agent-1", []string{"internal/auth/"}, []string{"internal/auth/auth.go"})
 
 	runningAgents := []*models.Agent{
 		{ID: "agent-1", Status: models.AgentStatusRunning},
@@ -214,11 +186,8 @@ func TestCollisionCheckerTopLevelLimit(t *testing.T) {
 	cc := NewCollisionChecker()
 
 	// Two agents already working in internal/
-	hints1 := &SchedulerHint{PathPrefixes: []string{"internal/auth/"}}
-	hints2 := &SchedulerHint{PathPrefixes: []string{"internal/config/"}}
-
-	cc.RegisterAgent("agent-1", hints1)
-	cc.RegisterAgent("agent-2", hints2)
+	cc.RegisterAgent("agent-1", []string{"internal/auth/"}, nil)
+	cc.RegisterAgent("agent-2", []string{"internal/config/"}, nil)
 
 	runningAgents := []*models.Agent{
 		{ID: "agent-1", Status: models.AgentStatusRunning},
@@ -242,11 +211,8 @@ func TestCollisionCheckerTopLevelLimitDifferentDirs(t *testing.T) {
 	cc := NewCollisionChecker()
 
 	// Two agents in different top-level directories
-	hints1 := &SchedulerHint{PathPrefixes: []string{"internal/auth/"}}
-	hints2 := &SchedulerHint{PathPrefixes: []string{"pkg/utils/"}}
-
-	cc.RegisterAgent("agent-1", hints1)
-	cc.RegisterAgent("agent-2", hints2)
+	cc.RegisterAgent("agent-1", []string{"internal/auth/"}, nil)
+	cc.RegisterAgent("agent-2", []string{"pkg/utils/"}, nil)
 
 	runningAgents := []*models.Agent{
 		{ID: "agent-1", Status: models.AgentStatusRunning},
@@ -269,8 +235,7 @@ func TestCollisionCheckerTopLevelLimitDifferentDirs(t *testing.T) {
 func TestCollisionCheckerNoPathInfo(t *testing.T) {
 	cc := NewCollisionChecker()
 
-	hints := &SchedulerHint{PathPrefixes: []string{"internal/auth/"}}
-	cc.RegisterAgent("agent-1", hints)
+	cc.RegisterAgent("agent-1", []string{"internal/auth/"}, nil)
 
 	runningAgents := []*models.Agent{
 		{ID: "agent-1", Status: models.AgentStatusRunning},
@@ -292,8 +257,7 @@ func TestCollisionCheckerNoPathInfo(t *testing.T) {
 func TestCollisionCheckerNonRunningAgentsIgnored(t *testing.T) {
 	cc := NewCollisionChecker()
 
-	hints := &SchedulerHint{PathPrefixes: []string{"internal/auth/"}}
-	cc.RegisterAgent("agent-1", hints)
+	cc.RegisterAgent("agent-1", []string{"internal/auth/"}, nil)
 
 	// Agent is not running
 	runningAgents := []*models.Agent{
@@ -316,8 +280,7 @@ func TestCollisionCheckerNonRunningAgentsIgnored(t *testing.T) {
 func TestCollisionCheckerMultipleHotspots(t *testing.T) {
 	cc := NewCollisionChecker()
 
-	hints := &SchedulerHint{PathPrefixes: []string{"internal/"}}
-	cc.RegisterAgent("agent-1", hints)
+	cc.RegisterAgent("agent-1", []string{"internal/"}, nil)
 
 	// Touch multiple files to make them hotspots
 	files := []string{
@@ -401,7 +364,7 @@ func TestCollisionCheckerExtractPathPrefixes(t *testing.T) {
 			Title:       tc.title,
 			Description: tc.description,
 		}
-		prefixes := cc.extractPathPrefixes(task)
+		prefixes := cc.ExtractPathPrefixes(task)
 		hasPaths := len(prefixes) > 0
 		if hasPaths != tc.wantPaths {
 			t.Errorf("extractPathPrefixes for %q: got paths=%v, want paths=%v", tc.title, hasPaths, tc.wantPaths)
@@ -412,11 +375,7 @@ func TestCollisionCheckerExtractPathPrefixes(t *testing.T) {
 func TestCollisionCheckerHotspotDeduplication(t *testing.T) {
 	cc := NewCollisionChecker()
 
-	hints := &SchedulerHint{
-		PathPrefixes: []string{"internal/"},
-		Hotspots:     []string{},
-	}
-	cc.RegisterAgent("agent-1", hints)
+	cc.RegisterAgent("agent-1", []string{"internal/"}, nil)
 
 	// Touch same file many times (should only appear once in hotspots)
 	for i := 0; i < 10; i++ {
@@ -486,8 +445,7 @@ func TestCollisionCheckerConcurrentAccess(t *testing.T) {
 	// Goroutine 1: Register and unregister agents
 	go func() {
 		for i := 0; i < 100; i++ {
-			hints := &SchedulerHint{PathPrefixes: []string{"internal/"}}
-			cc.RegisterAgent("agent-concurrent", hints)
+			cc.RegisterAgent("agent-concurrent", []string{"internal/"}, nil)
 			cc.UnregisterAgent("agent-concurrent")
 		}
 		done <- true
@@ -495,8 +453,7 @@ func TestCollisionCheckerConcurrentAccess(t *testing.T) {
 
 	// Goroutine 2: Record touches
 	go func() {
-		hints := &SchedulerHint{PathPrefixes: []string{"pkg/"}}
-		cc.RegisterAgent("agent-touch", hints)
+		cc.RegisterAgent("agent-touch", []string{"pkg/"}, nil)
 		for i := 0; i < 100; i++ {
 			cc.RecordTouch("agent-touch", "pkg/test.go")
 		}

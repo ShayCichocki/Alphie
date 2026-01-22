@@ -2,8 +2,9 @@ package orchestrator
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
+
+	"github.com/ShayCichocki/alphie/internal/git"
 )
 
 // protectedBranches are branches that cannot be directly worked on.
@@ -16,6 +17,7 @@ type SessionBranchManager struct {
 	branchName string
 	greenfield bool
 	repoPath   string
+	git        git.Runner
 }
 
 // NewSessionBranchManager creates a new SessionBranchManager.
@@ -31,6 +33,23 @@ func NewSessionBranchManager(sessionID, repoPath string, greenfield bool) *Sessi
 		branchName: branchName,
 		greenfield: greenfield,
 		repoPath:   repoPath,
+		git:        git.NewRunner(repoPath),
+	}
+}
+
+// NewSessionBranchManagerWithRunner creates a new SessionBranchManager with a custom git runner (for testing).
+func NewSessionBranchManagerWithRunner(sessionID, repoPath string, greenfield bool, runner git.Runner) *SessionBranchManager {
+	branchName := ""
+	if !greenfield {
+		branchName = fmt.Sprintf("session-%s", sessionID)
+	}
+
+	return &SessionBranchManager{
+		sessionID:  sessionID,
+		branchName: branchName,
+		greenfield: greenfield,
+		repoPath:   repoPath,
+		git:        runner,
 	}
 }
 
@@ -42,22 +61,21 @@ func (m *SessionBranchManager) CreateBranch() error {
 	}
 
 	// Check if branch already exists
-	cmd := exec.Command("git", "rev-parse", "--verify", m.branchName)
-	cmd.Dir = m.repoPath
-	if err := cmd.Run(); err == nil {
+	exists, err := m.git.BranchExists(m.branchName)
+	if err != nil {
+		return fmt.Errorf("failed to check if branch exists: %w", err)
+	}
+
+	if exists {
 		// Branch exists, check it out
-		cmd = exec.Command("git", "checkout", m.branchName)
-		cmd.Dir = m.repoPath
-		if err := cmd.Run(); err != nil {
+		if err := m.git.CheckoutBranch(m.branchName); err != nil {
 			return fmt.Errorf("failed to checkout existing branch %s: %w", m.branchName, err)
 		}
 		return nil
 	}
 
 	// Create and checkout new branch
-	cmd = exec.Command("git", "checkout", "-b", m.branchName)
-	cmd.Dir = m.repoPath
-	if err := cmd.Run(); err != nil {
+	if err := m.git.CreateAndCheckoutBranch(m.branchName); err != nil {
 		return fmt.Errorf("failed to create branch %s: %w", m.branchName, err)
 	}
 
@@ -95,30 +113,30 @@ func (m *SessionBranchManager) MergeToMain() error {
 
 	// Determine the main branch name
 	mainBranch := "main"
-	cmd := exec.Command("git", "rev-parse", "--verify", "main")
-	cmd.Dir = m.repoPath
-	if err := cmd.Run(); err != nil {
+	exists, err := m.git.BranchExists("main")
+	if err != nil {
+		return fmt.Errorf("failed to check if main branch exists: %w", err)
+	}
+	if !exists {
 		// Try master if main doesn't exist
-		cmd = exec.Command("git", "rev-parse", "--verify", "master")
-		cmd.Dir = m.repoPath
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to find main or master branch: %w", err)
+		exists, err = m.git.BranchExists("master")
+		if err != nil {
+			return fmt.Errorf("failed to check if master branch exists: %w", err)
+		}
+		if !exists {
+			return fmt.Errorf("failed to find main or master branch")
 		}
 		mainBranch = "master"
 	}
 
 	// Checkout the main branch
-	cmd = exec.Command("git", "checkout", mainBranch)
-	cmd.Dir = m.repoPath
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to checkout %s: %s: %w", mainBranch, string(output), err)
+	if err := m.git.CheckoutBranch(mainBranch); err != nil {
+		return fmt.Errorf("failed to checkout %s: %w", mainBranch, err)
 	}
 
-	// Merge the session branch into main
-	cmd = exec.Command("git", "merge", "--no-ff", "-m", fmt.Sprintf("Merge session %s", m.sessionID), m.branchName)
-	cmd.Dir = m.repoPath
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to merge session branch %s into %s: %s: %w", m.branchName, mainBranch, string(output), err)
+	// Merge the session branch into main with a custom message
+	if err := m.git.MergeNoFFMessage(m.branchName, fmt.Sprintf("Merge session %s", m.sessionID)); err != nil {
+		return fmt.Errorf("failed to merge session branch %s into %s: %w", m.branchName, mainBranch, err)
 	}
 
 	return nil
@@ -138,23 +156,20 @@ func (m *SessionBranchManager) Cleanup() error {
 
 	// Determine the main branch name
 	mainBranch := "main"
-	cmd := exec.Command("git", "rev-parse", "--verify", "main")
-	cmd.Dir = m.repoPath
-	if err := cmd.Run(); err != nil {
+	exists, err := m.git.BranchExists("main")
+	if err != nil {
+		mainBranch = "master"
+	} else if !exists {
 		mainBranch = "master"
 	}
 
 	// First, checkout main to avoid deleting the current branch
-	cmd = exec.Command("git", "checkout", mainBranch)
-	cmd.Dir = m.repoPath
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to checkout %s before cleanup: %s: %w", mainBranch, string(output), err)
+	if err := m.git.CheckoutBranch(mainBranch); err != nil {
+		return fmt.Errorf("failed to checkout %s before cleanup: %w", mainBranch, err)
 	}
 
 	// Delete the session branch
-	cmd = exec.Command("git", "branch", "-D", m.branchName)
-	cmd.Dir = m.repoPath
-	if err := cmd.Run(); err != nil {
+	if err := m.git.DeleteBranch(m.branchName); err != nil {
 		return fmt.Errorf("failed to delete session branch %s: %w", m.branchName, err)
 	}
 

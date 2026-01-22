@@ -6,18 +6,27 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// TaskCounts holds the count of tasks in each status.
+type TaskCounts struct {
+	Done    int
+	Failed  int
+	Running int
+}
+
 // Footer renders the status bar and keyboard hints.
 type Footer struct {
-	message     string
-	success     bool
-	sessionDone bool
+	message      string
+	success      bool
+	sessionDone  bool
 	focusedPanel int
+	activeTab    int
 	width        int
+	taskCounts   TaskCounts
 
 	// Styles
-	successStyle lipgloss.Style
-	errorStyle   lipgloss.Style
-	hintStyle    lipgloss.Style
+	successStyle   lipgloss.Style
+	errorStyle     lipgloss.Style
+	hintStyle      lipgloss.Style
 	separatorStyle lipgloss.Style
 }
 
@@ -65,19 +74,41 @@ func (f *Footer) SetWidth(width int) {
 	f.width = width
 }
 
+// SetTaskCounts updates the task counts for display.
+func (f *Footer) SetTaskCounts(counts TaskCounts) {
+	f.taskCounts = counts
+}
+
+// SetActiveTab sets which tab is currently active.
+func (f *Footer) SetActiveTab(tab int) {
+	f.activeTab = tab
+}
+
 // View renders the footer.
 func (f *Footer) View() string {
 	var left string
 	var right string
 
-	// Left side: status message
+	// Left side: task counts and status message
+	total := f.taskCounts.Done + f.taskCounts.Failed + f.taskCounts.Running
+	if total > 0 {
+		counts := fmt.Sprintf("✓%d", f.taskCounts.Done)
+		if f.taskCounts.Failed > 0 {
+			counts += f.errorStyle.Render(fmt.Sprintf(" ✗%d", f.taskCounts.Failed))
+		}
+		if f.taskCounts.Running > 0 {
+			counts += fmt.Sprintf(" ⏳%d", f.taskCounts.Running)
+		}
+		left = counts
+	}
+
 	if f.sessionDone {
 		if f.success {
 			left = f.successStyle.Render("✓ " + f.message)
 		} else {
 			left = f.errorStyle.Render("✗ " + f.message)
 		}
-	} else if f.message != "" {
+	} else if f.message != "" && left == "" {
 		left = f.hintStyle.Render(f.message)
 	}
 
@@ -101,17 +132,20 @@ func (f *Footer) keyboardHints() string {
 		return f.hintStyle.Render("Press q to exit")
 	}
 
-	// Base hints
-	hints := "←/→ panels"
+	// Base hints - always show tab switching
+	hints := "1:Main 2:Logs"
 
-	// Panel-specific hints
-	switch f.focusedPanel {
-	case 0: // Tasks panel
-		hints += " │ ↑/↓ scroll"
-	case 1: // Agents panel
-		hints += " │ ↑/↓/←/→ nav"
-	case 2: // Logs panel
+	if f.activeTab == 1 { // TabLogs
+		// Logs tab hints
 		hints += " │ ↑/↓ scroll │ f filter │ a auto-scroll"
+	} else {
+		// Main tab hints based on focused panel
+		switch f.focusedPanel {
+		case 0: // Tasks panel
+			hints += " │ ↑/↓ scroll │ r retry │ tab switch"
+		case 1: // Agents panel
+			hints += " │ ↑/↓/←/→ nav │ tab switch"
+		}
 	}
 
 	hints += " │ q quit"

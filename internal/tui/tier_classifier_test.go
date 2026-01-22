@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestClassifyTier(t *testing.T) {

@@ -54,6 +54,12 @@ func (ls *LearningSystem) Close() error {
 	return nil
 }
 
+// GetStore returns the underlying LearningStore.
+// This is used for advanced features like effectiveness tracking.
+func (ls *LearningSystem) GetStore() *LearningStore {
+	return ls.store
+}
+
 // OnTaskStart is called at the beginning of a task to retrieve relevant learnings.
 // It retrieves learnings based on task description and file paths,
 // records triggers for matched learnings, and returns them for injection
@@ -402,27 +408,12 @@ func generateConceptID() string {
 	return fmt.Sprintf("cp-%d", time.Now().UnixNano())
 }
 
-// Store returns the underlying LearningStore for direct access.
-func (ls *LearningSystem) Store() *LearningStore {
-	return ls.store
-}
-
-// Retriever returns the underlying Retriever for direct access.
-func (ls *LearningSystem) Retriever() *Retriever {
-	return ls.retriever
-}
-
-// Lifecycle returns the underlying LifecycleManager for direct access.
-func (ls *LearningSystem) Lifecycle() *LifecycleManager {
-	return ls.lifecycle
-}
-
-// Concepts returns the underlying ConceptManager for direct access.
-func (ls *LearningSystem) Concepts() *ConceptManager {
-	return ls.concepts
-}
-
 // CleanupStale delegates to the lifecycle manager to remove stale learnings.
 func (ls *LearningSystem) CleanupStale() (int, error) {
 	return ls.lifecycle.CleanupStale()
+}
+
+// UpdateLearning updates an existing learning in the store.
+func (ls *LearningSystem) UpdateLearning(learning *Learning) error {
+	return ls.store.Update(learning)
 }

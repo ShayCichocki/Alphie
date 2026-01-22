@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shayc/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/agent"
 )
 
 // TestBaselineCaptureGateComparison tests the full flow of:

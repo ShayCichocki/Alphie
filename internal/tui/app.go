@@ -6,7 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/shayc/alphie/pkg/models"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // Tab constants for navigation.
@@ -40,16 +40,20 @@ type KeyMsg struct {
 
 // OrchestratorEventMsg wraps an orchestrator event for the TUI.
 type OrchestratorEventMsg struct {
-	Type       string
-	TaskID     string
-	TaskTitle  string
-	AgentID    string
-	Message    string
-	Error      string
-	Timestamp  time.Time
-	TokensUsed int64         // For progress events
-	Cost       float64       // For progress events
-	Duration   time.Duration // For progress events
+	Type           string
+	TaskID         string
+	TaskTitle      string
+	ParentID       string        // ID of the parent task/epic
+	AgentID        string
+	Message        string
+	Error          string
+	Timestamp      time.Time
+	TokensUsed     int64         // For progress events
+	Cost           float64       // For progress events
+	Duration       time.Duration // For progress events
+	LogFile        string        // Path to execution log
+	CurrentAction  string        // What the agent is currently doing (e.g., "Reading auth.go")
+	OriginalTaskID string        // For epic_created: the task_entered ID to replace
 }
 
 // SessionDoneMsg signals that the orchestrator session has completed.
@@ -61,6 +65,13 @@ type SessionDoneMsg struct {
 // DebugLogMsg is sent to add a debug message to the logs.
 type DebugLogMsg struct {
 	Message string
+}
+
+// TaskRetryMsg is sent when the user requests to retry a failed task.
+type TaskRetryMsg struct {
+	TaskID    string
+	TaskTitle string
+	Tier      models.Tier
 }
 
 // LogEntry represents a log message displayed in the logs tab.

@@ -50,11 +50,6 @@ func (c *Client) Close() error {
 	return c.db.Close()
 }
 
-// DB returns the underlying database for advanced operations.
-func (c *Client) DB() *DB {
-	return c.db
-}
-
 // Project returns the client's default project scope.
 func (c *Client) Project() string {
 	return c.project

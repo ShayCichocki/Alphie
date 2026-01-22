@@ -317,7 +317,7 @@ func TestClient_AddLearning_RequiresProject(t *testing.T) {
 	defer client.Close()
 
 	// Create client without project
-	noProjectClient := NewClient(client.DB(), "")
+	noProjectClient := NewClient(client.db, "")
 
 	_, err := noProjectClient.AddLearning("Test learning", nil)
 	if err == nil {

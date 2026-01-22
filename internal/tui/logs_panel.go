@@ -41,6 +41,9 @@ type LogsPanel struct {
 	focused       bool
 	maxLogs       int // Maximum log entries to keep
 
+	// Progress aggregation: one live entry per agent instead of spam
+	progressEntries map[string]*PanelLogEntry
+
 	// Styles
 	titleStyle   lipgloss.Style
 	borderStyle  lipgloss.Style
@@ -57,12 +60,13 @@ type LogsPanel struct {
 // NewLogsPanel creates a new LogsPanel instance.
 func NewLogsPanel() *LogsPanel {
 	return &LogsPanel{
-		logs:          make([]PanelLogEntry, 0),
-		filter:        "all",
-		filterOptions: []string{"all"},
-		filterIndex:   0,
-		autoScroll:    true,
-		maxLogs:       1000,
+		logs:            make([]PanelLogEntry, 0),
+		filter:          "all",
+		filterOptions:   []string{"all"},
+		filterIndex:     0,
+		autoScroll:      true,
+		maxLogs:         1000,
+		progressEntries: make(map[string]*PanelLogEntry),
 
 		titleStyle: lipgloss.NewStyle().
 			Bold(true).
@@ -119,6 +123,22 @@ func (p *LogsPanel) AddLog(entry PanelLogEntry) {
 	if p.autoScroll {
 		p.scrollToBottom()
 	}
+}
+
+// UpdateProgress updates the live progress entry for an agent (instead of creating new log lines).
+// This prevents progress spam in the logs.
+func (p *LogsPanel) UpdateProgress(agentID string, entry PanelLogEntry) {
+	p.progressEntries[agentID] = &entry
+
+	// Update filter options if new agent
+	if agentID != "" {
+		p.addFilterOption(agentID)
+	}
+}
+
+// ClearProgress removes the progress entry for an agent (when task completes/fails).
+func (p *LogsPanel) ClearProgress(agentID string) {
+	delete(p.progressEntries, agentID)
 }
 
 // addFilterOption adds an agent ID to filter options if not already present.
@@ -253,15 +273,21 @@ func (p *LogsPanel) View() string {
 
 	// Get filtered logs
 	filtered := p.filteredLogs()
-	visibleLines := p.visibleLines()
 
-	if len(filtered) == 0 {
+	// Reserve lines for progress entries at bottom
+	progressLines := len(p.progressEntries)
+	visibleLines := p.visibleLines() - progressLines
+	if visibleLines < 1 {
+		visibleLines = 1
+	}
+
+	if len(filtered) == 0 && progressLines == 0 {
 		b.WriteString(lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			Italic(true).
 			Render("  No logs"))
 	} else {
-		// Calculate visible range
+		// Calculate visible range for regular logs
 		endIdx := p.scrollOffset + visibleLines
 		if endIdx > len(filtered) {
 			endIdx = len(filtered)
@@ -278,13 +304,27 @@ func (p *LogsPanel) View() string {
 			b.WriteString("\n")
 		}
 
-		// Scroll position indicator
+		// Scroll position indicator (only if there are logs beyond visible)
 		if len(filtered) > visibleLines {
 			scrollPct := float64(p.scrollOffset) / float64(len(filtered)-visibleLines) * 100
 			scrollIndicator := fmt.Sprintf(" [%d/%d %.0f%%]", endIdx, len(filtered), scrollPct)
 			b.WriteString(lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240")).
 				Render(scrollIndicator))
+			b.WriteString("\n")
+		}
+
+		// Render live progress entries at bottom (one line per agent, always visible)
+		if progressLines > 0 {
+			b.WriteString(lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240")).
+				Render("─── live ───"))
+			b.WriteString("\n")
+			for _, entry := range p.progressEntries {
+				line := p.renderLogLine(*entry)
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
 		}
 	}
 
