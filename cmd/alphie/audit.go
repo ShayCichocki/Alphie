@@ -60,7 +60,7 @@ func runAudit(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Create runner factory for API calls
-	runnerFactory, err := createRunnerFactory()
+	runnerFactory, err := createRunnerFactory(false) // audit always uses API
 	if err != nil {
 		return fmt.Errorf("create runner factory: %w", err)
 	}

@@ -14,15 +14,15 @@ import (
 func modelForTier(tier models.Tier) string {
 	switch tier {
 	case models.TierQuick:
-		return "claude-haiku-3-5-20241022"
+		return "haiku"
 	case models.TierScout:
-		return "claude-haiku-3-5-20241022"
+		return "haiku"
 	case models.TierBuilder:
-		return "claude-sonnet-4-20250514"
+		return "sonnet"
 	case models.TierArchitect:
-		return "claude-opus-4-20250514"
+		return "opus"
 	default:
-		return "claude-sonnet-4-20250514"
+		return "sonnet"
 	}
 }
 

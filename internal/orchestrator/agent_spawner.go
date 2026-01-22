@@ -16,14 +16,12 @@ import (
 
 // SpawnOptions contains configuration for spawning an agent.
 type SpawnOptions struct {
-	// Tier is the agent tier for execution.
-	Tier models.Tier
-	// Learnings are relevant learnings for this task.
-	Learnings []*learning.Learning
-	// Baseline is the session baseline for regression detection.
-	Baseline *agent.Baseline
-	// OnProgress is called with progress updates.
-	OnProgress func(ProgressReport)
+	Tier           models.Tier
+	Learnings      []*learning.Learning
+	Baseline       *agent.Baseline
+	OnProgress     func(ProgressReport)
+	WorkersRunning int
+	WorkersBlocked int
 }
 
 // SpawnResult contains the outcome of a spawned agent.
@@ -91,15 +89,16 @@ func (s *DefaultAgentSpawner) Spawn(ctx context.Context, task *models.Task, opts
 	pathPrefixes := s.collision.ExtractPathPrefixes(task)
 	s.collision.RegisterAgent(agentModel.ID, pathPrefixes, nil)
 
-	// Emit task started event
 	s.emitEvent(OrchestratorEvent{
-		Type:      EventTaskStarted,
-		TaskID:    task.ID,
-		TaskTitle: task.Title,
-		ParentID:  task.ParentID,
-		AgentID:   agentModel.ID,
-		Message:   fmt.Sprintf("Started task: %s", task.Title),
-		Timestamp: time.Now(),
+		Type:           EventTaskStarted,
+		TaskID:         task.ID,
+		TaskTitle:      task.Title,
+		ParentID:       task.ParentID,
+		AgentID:        agentModel.ID,
+		Message:        fmt.Sprintf("Started task: %s", task.Title),
+		Timestamp:      time.Now(),
+		WorkersRunning: opts.WorkersRunning,
+		WorkersBlocked: opts.WorkersBlocked,
 	})
 
 	// Spawn agent goroutine
@@ -126,15 +125,17 @@ func (s *DefaultAgentSpawner) Spawn(ctx context.Context, task *models.Task, opts
 					})
 				}
 				s.emitEvent(OrchestratorEvent{
-					Type:          EventAgentProgress,
-					TaskID:        task.ID,
-					AgentID:       update.AgentID,
-					Message:       fmt.Sprintf("Agent progress: %d tokens, $%.4f", update.TokensUsed, update.Cost),
-					Timestamp:     time.Now(),
-					TokensUsed:    update.TokensUsed,
-					Cost:          update.Cost,
-					Duration:      update.Duration,
-					CurrentAction: update.CurrentAction,
+					Type:           EventAgentProgress,
+					TaskID:         task.ID,
+					AgentID:        update.AgentID,
+					Message:        fmt.Sprintf("Agent progress: %d tokens, $%.4f", update.TokensUsed, update.Cost),
+					Timestamp:      time.Now(),
+					TokensUsed:     update.TokensUsed,
+					Cost:           update.Cost,
+					Duration:       update.Duration,
+					CurrentAction:  update.CurrentAction,
+					WorkersRunning: opts.WorkersRunning,
+					WorkersBlocked: opts.WorkersBlocked,
 				})
 			},
 		}

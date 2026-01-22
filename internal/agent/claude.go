@@ -78,6 +78,10 @@ type StartOptions struct {
 	// Model is the Claude model to use (e.g., "claude-sonnet-4-20250514").
 	// If empty, uses the CLI's default model.
 	Model string
+	// Temperature controls randomness (0.0-1.0).
+	// 0.0 is deterministic, 1.0 is maximum randomness.
+	// If nil, uses the default temperature.
+	Temperature *float64
 }
 
 // Start launches the Claude Code subprocess with the given prompt and worktree path.

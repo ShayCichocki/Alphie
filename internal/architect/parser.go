@@ -3,10 +3,14 @@ package architect
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ShayCichocki/alphie/internal/agent"
 )
@@ -23,16 +27,38 @@ type Section struct {
 	Level int `json:"level"`
 }
 
+// ParserCache stores parsed specs by file content hash.
+type ParserCache struct {
+	mu      sync.RWMutex
+	entries map[string]*CachedSpec // key = SHA256 hash
+}
+
+// CachedSpec represents a cached parsed specification.
+type CachedSpec struct {
+	Spec     *ArchSpec
+	FilePath string
+	FileHash string
+	ParsedAt time.Time
+}
+
 // Parser extracts structured features from markdown architecture documents using Claude.
 type Parser struct {
 	// extractionPrompt is the prompt template used to extract features.
 	extractionPrompt string
+	// cache stores parsed specs by content hash
+	cache *ParserCache
+	// enableCache controls whether caching is enabled
+	enableCache bool
 }
 
 // NewParser creates a new Parser with default settings.
 func NewParser() *Parser {
 	return &Parser{
 		extractionPrompt: defaultExtractionPrompt,
+		cache: &ParserCache{
+			entries: make(map[string]*CachedSpec),
+		},
+		enableCache: true,
 	}
 }
 
@@ -59,18 +85,60 @@ Respond with a JSON object in this exact format:
 }
 
 IMPORTANT:
+- Use EXACTLY the feature IDs and names from the document
+- Do NOT infer or generate criteria - only extract explicitly stated criteria
+- BE DETERMINISTIC: Always extract the same features in the same order
 - Extract ALL features, requirements, and specifications from the document
-- If no explicit criteria exist, infer reasonable ones from the description
 - Ensure the JSON is valid and complete
 - Do not include any text before or after the JSON object
 
 Document to parse:
 `
 
-// Parse extracts features from a markdown architecture document.
+// xmlExtractionPrompt is the prompt used to extract features from XML documents.
+const xmlExtractionPrompt = `You are an architecture document parser. Analyze the following XML document and extract all features, requirements, and specifications.
+
+For each feature/requirement you identify, extract:
+1. ID: A unique identifier (use existing IDs from XML attributes/tags, or generate ones like F001, F002, etc.)
+2. Name: A short descriptive name for the feature
+3. Description: The full description of the feature
+4. Criteria: What constitutes full implementation (optional)
+
+Parse XML elements, attributes, and nested structures. Common patterns:
+- <feature id="F001" name="...">description</feature>
+- <requirement>...</requirement>
+- <spec>...</spec>
+- Or any custom XML schema
+
+Respond with a JSON object in this exact format:
+{
+  "name": "Specification Name",
+  "features": [
+    {
+      "id": "F001",
+      "name": "Feature Name",
+      "description": "Full description",
+      "criteria": "What defines complete implementation"
+    }
+  ]
+}
+
+IMPORTANT:
+- Use EXACTLY the feature IDs and names from the XML
+- Do NOT infer or generate criteria - only extract explicitly stated criteria
+- BE DETERMINISTIC: Always extract the same features in the same order
+- Extract ALL features, requirements, and specifications from the XML
+- Handle nested elements and attributes appropriately
+- Ensure the JSON is valid and complete
+- Do not include any text before or after the JSON object
+
+XML document to parse:
+`
+
+// Parse extracts features from an architecture document (markdown or XML).
 // It reads the file at docPath and uses Claude to extract structured features.
 func (p *Parser) Parse(ctx context.Context, docPath string, claude agent.ClaudeRunner) (*ArchSpec, error) {
-	// Read the markdown document
+	// Read the document
 	content, err := os.ReadFile(docPath)
 	if err != nil {
 		return nil, fmt.Errorf("read document: %w", err)
@@ -81,11 +149,32 @@ func (p *Parser) Parse(ctx context.Context, docPath string, claude agent.ClaudeR
 		return nil, fmt.Errorf("document is empty")
 	}
 
-	// Build the prompt
-	prompt := p.extractionPrompt + string(content)
+	// Compute content hash for caching
+	hash := computeSHA256(content)
 
-	// Start Claude process
-	if err := claude.Start(prompt, ""); err != nil {
+	// Check cache
+	if p.enableCache && p.cache != nil {
+		if cached := p.cache.Get(hash); cached != nil {
+			return cached.Spec, nil // Cache hit
+		}
+	}
+
+	// Cache miss - proceed with parsing
+	// Select prompt based on file extension
+	promptTemplate := p.extractionPrompt
+	if strings.HasSuffix(strings.ToLower(docPath), ".xml") {
+		promptTemplate = xmlExtractionPrompt
+	}
+
+	// Build the prompt
+	prompt := promptTemplate + string(content)
+
+	// Start Claude process with temperature=0 for deterministic parsing
+	temp := 0.0
+	opts := &agent.StartOptions{
+		Temperature: &temp,
+	}
+	if err := claude.StartWithOptions(prompt, "", opts); err != nil {
 		return nil, fmt.Errorf("start claude: %w", err)
 	}
 
@@ -112,6 +201,16 @@ func (p *Parser) Parse(ctx context.Context, docPath string, claude agent.ClaudeR
 	spec, err := parseResponse(response)
 	if err != nil {
 		return nil, fmt.Errorf("parse response: %w", err)
+	}
+
+	// Store in cache after successful parse
+	if p.enableCache && p.cache != nil {
+		p.cache.Set(hash, &CachedSpec{
+			Spec:     spec,
+			FilePath: docPath,
+			FileHash: hash,
+			ParsedAt: time.Now(),
+		})
 	}
 
 	return spec, nil
@@ -182,4 +281,24 @@ func validateSpec(spec *ArchSpec) error {
 func ParseArchDoc(ctx context.Context, docPath string, claude agent.ClaudeRunner) (*ArchSpec, error) {
 	parser := NewParser()
 	return parser.Parse(ctx, docPath, claude)
+}
+
+// computeSHA256 computes the SHA256 hash of the given data.
+func computeSHA256(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
+}
+
+// Get retrieves a cached spec by hash.
+func (c *ParserCache) Get(hash string) *CachedSpec {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.entries[hash]
+}
+
+// Set stores a spec in the cache by hash.
+func (c *ParserCache) Set(hash string, spec *CachedSpec) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[hash] = spec
 }

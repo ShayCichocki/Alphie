@@ -85,8 +85,8 @@ func runInteractive() error {
 		log.Printf("[interactive] cleaned up %d orphaned worktree(s) from previous sessions", removed)
 	}
 
-	// Create runner factory for API calls
-	runnerFactory, err := createRunnerFactory()
+	// Create runner factory (CLI subprocess or API)
+	runnerFactory, err := createRunnerFactory(interactiveUseCLI)
 	if err != nil {
 		return fmt.Errorf("create runner factory: %w", err)
 	}

@@ -21,7 +21,7 @@ func runQuickMode(ctx context.Context, repoPath, task string, verbose bool) erro
 	fmt.Printf("Quick mode: %s\n", task)
 
 	// Create runner factory
-	runnerFactory, err := createRunnerFactory()
+	runnerFactory, err := createRunnerFactory(runUseCLI)
 	if err != nil {
 		return fmt.Errorf("create runner factory: %w", err)
 	}
@@ -65,7 +65,7 @@ func runPassthroughMode(ctx context.Context, repoPath, task string, verbose bool
 	startTime := time.Now()
 
 	// Create Claude runner via API
-	runnerFactory, err := createRunnerFactory()
+	runnerFactory, err := createRunnerFactory(runUseCLI)
 	if err != nil {
 		return fmt.Errorf("create runner factory: %w", err)
 	}
@@ -79,14 +79,14 @@ Task: %s
 Please complete this task. When finished, provide a summary of what was done.`, task)
 
 	// Start Claude with sonnet model (default for passthrough)
-	opts := &agent.StartOptions{Model: "claude-sonnet-4-20250514"}
+	opts := &agent.StartOptions{Model: "sonnet"}
 	if err := claude.StartWithOptions(prompt, repoPath, opts); err != nil {
 		return fmt.Errorf("start claude process: %w", err)
 	}
 
 	// Collect output
 	var output strings.Builder
-	var tokenTracker = agent.NewTokenTracker("claude-sonnet-4-20250514")
+	var tokenTracker = agent.NewTokenTracker("sonnet")
 
 	for event := range claude.Output() {
 		switch event.Type {

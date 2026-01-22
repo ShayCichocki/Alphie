@@ -66,4 +66,8 @@ type OrchestratorEvent struct {
 	CurrentAction string
 	// OriginalTaskID is the task ID from TUI's task_entered event (for epic_created events).
 	OriginalTaskID string
+	// WorkersRunning is the number of agents currently executing tasks.
+	WorkersRunning int
+	// WorkersBlocked is the number of tasks blocked by dependencies or collisions.
+	WorkersBlocked int
 }

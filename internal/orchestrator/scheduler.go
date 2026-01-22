@@ -2,6 +2,10 @@ package orchestrator
 
 import (
 	"fmt"
+	"math"
+	"regexp"
+	"sort"
+	"strconv"
 	"sync"
 
 	"github.com/ShayCichocki/alphie/internal/graph"
@@ -216,7 +220,22 @@ func (s *Scheduler) Schedule() []*models.Task {
 	}
 	debugLog("[scheduler] Scheduled %d tasks for execution (max parallelism: %d)", len(schedulable), availableSlots)
 
-	// Limit to available slots.
+	sort.SliceStable(schedulable, func(i, j int) bool {
+		return extractMilestoneNumber(schedulable[i]) < extractMilestoneNumber(schedulable[j])
+	})
+
+	if len(schedulable) > 0 {
+		debugLog("[scheduler] Sorted %d tasks by milestone:", len(schedulable))
+		for _, task := range schedulable {
+			milestone := extractMilestoneNumber(task)
+			if milestone == math.MaxInt {
+				debugLog("[scheduler]   - %s (%s) [no milestone]", task.ID, task.Title)
+			} else {
+				debugLog("[scheduler]   - %s (%s) [M%d]", task.ID, task.Title, milestone)
+			}
+		}
+	}
+
 	if len(schedulable) > availableSlots {
 		schedulable = schedulable[:availableSlots]
 	}
@@ -286,6 +305,18 @@ func (s *Scheduler) GetRunningCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.running)
+}
+
+func extractMilestoneNumber(task *models.Task) int {
+	re := regexp.MustCompile(`\bM(\d+)\b`)
+	matches := re.FindStringSubmatch(task.Title)
+	if len(matches) > 1 {
+		num, err := strconv.Atoi(matches[1])
+		if err == nil {
+			return num
+		}
+	}
+	return math.MaxInt
 }
 
 // markDependentsBlocked marks all tasks that depend on the failed task as blocked.

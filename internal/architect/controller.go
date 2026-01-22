@@ -4,12 +4,13 @@ package architect
 import (
 	"context"
 	"fmt"
-	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/ShayCichocki/alphie/internal/agent"
+	"github.com/ShayCichocki/alphie/internal/orchestrator"
 	"github.com/ShayCichocki/alphie/internal/prog"
+	"github.com/ShayCichocki/alphie/internal/state"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // ProgressPhase represents the current phase of the implementation loop.
@@ -52,6 +53,10 @@ type ProgressEvent struct {
 	Cost float64
 	// CostBudget is the cost budget limit.
 	CostBudget float64
+	// WorkersRunning is the number of agents currently executing tasks.
+	WorkersRunning int
+	// WorkersBlocked is the number of tasks blocked by dependencies or collisions.
+	WorkersBlocked int
 	// Message is an optional status message.
 	Message string
 	// Timestamp is when the event occurred.
@@ -95,6 +100,13 @@ type Controller struct {
 	// runnerFactory creates ClaudeRunner instances.
 	// If nil, falls back to creating ClaudeProcess (legacy).
 	runnerFactory agent.ClaudeRunnerFactory
+	// tokenTracker tracks cumulative token usage and cost.
+	tokenTracker *agent.TokenTracker
+
+	// Current state tracking (for progress events during execution)
+	currentIteration     int
+	currentFeaturesTotal int
+	currentFeaturesComplete int
 }
 
 // ControllerOption is a functional option for configuring a Controller.
@@ -167,6 +179,7 @@ func NewController(maxIterations int, budget float64, noConvergeAfter int, opts 
 			BudgetLimit:     budget,
 			NoProgressLimit: noConvergeAfter,
 		}),
+		tokenTracker: agent.NewTokenTracker("sonnet"),
 	}
 
 	for _, opt := range opts {
@@ -231,6 +244,7 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 	var result RunResult
 	var totalCost float64
 	var lastGapCount int = -1
+	var lastIterationCost float64
 
 	for iteration := 1; ; iteration++ {
 		select {
@@ -244,7 +258,7 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 			Phase:     PhaseParsing,
 			Iteration: iteration,
 			Cost:      totalCost,
-			Message:   "Parsing architecture document...",
+			Message:   fmt.Sprintf("Iteration %d/%d: Parsing architecture document...", iteration, c.MaxIterations),
 		})
 
 		claude := c.createRunner(ctx)
@@ -253,19 +267,43 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 			return fmt.Errorf("parse architecture doc (iteration %d): %w", iteration, err)
 		}
 
+		// Track tokens from parsing
+		if apiRunner, ok := claude.(*agent.ClaudeAPIAdapter); ok {
+			apiClient := apiRunner.Client()
+			if apiClient != nil {
+				input, output := apiClient.Tracker().Total()
+				c.tokenTracker.Update(agent.MessageDeltaUsage{
+					InputTokens:  input,
+					OutputTokens: output,
+				})
+			}
+		}
+
 		// Step 2: Audit codebase for gaps
 		c.emitProgress(ProgressEvent{
 			Phase:         PhaseAuditing,
 			Iteration:     iteration,
 			FeaturesTotal: len(spec.Features),
 			Cost:          totalCost,
-			Message:       fmt.Sprintf("Auditing codebase against %d features...", len(spec.Features)),
+			Message:       fmt.Sprintf("Iteration %d/%d: Auditing codebase against %d features...", iteration, c.MaxIterations, len(spec.Features)),
 		})
 
 		auditClaude := c.createRunner(ctx)
 		gapReport, err := c.auditor.Audit(ctx, spec, c.RepoPath, auditClaude)
 		if err != nil {
 			return fmt.Errorf("audit codebase (iteration %d): %w", iteration, err)
+		}
+
+		// Track tokens from auditing
+		if apiRunner, ok := auditClaude.(*agent.ClaudeAPIAdapter); ok {
+			apiClient := apiRunner.Client()
+			if apiClient != nil {
+				input, output := apiClient.Tracker().Total()
+				c.tokenTracker.Update(agent.MessageDeltaUsage{
+					InputTokens:  input,
+					OutputTokens: output,
+				})
+			}
 		}
 
 		// Calculate metrics
@@ -282,13 +320,19 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 			completionPct = float64(completedFeatures) / float64(totalFeatures) * 100.0
 		}
 
+		// Update controller state for progress events
+		c.currentIteration = iteration
+		c.currentFeaturesTotal = totalFeatures
+		c.currentFeaturesComplete = completedFeatures
+
 		// Determine if progress was made
 		progressMade := lastGapCount < 0 || gapsFound < lastGapCount
 		lastGapCount = gapsFound
 
-		// Estimate cost for this iteration (placeholder - actual cost tracking would need integration)
-		iterationCost := 0.01 * float64(gapsFound+1) // Simple estimate
-		totalCost += iterationCost
+		// Get real cost from token tracker
+		totalCost = c.tokenTracker.GetCost()
+		iterationCost := totalCost - lastIterationCost // Delta for this iteration
+		lastIterationCost = totalCost
 
 		iterResult := IterationResult{
 			Iteration:     iteration,
@@ -308,7 +352,6 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 			return nil
 		}
 
-		// Step 4: Plan epics from gaps (if there are gaps and we have a planner)
 		if gapsFound > 0 && c.planner != nil {
 			c.emitProgress(ProgressEvent{
 				Phase:            PhasePlanning,
@@ -317,10 +360,11 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 				FeaturesTotal:    totalFeatures,
 				GapsFound:        gapsFound,
 				Cost:             totalCost,
-				Message:          fmt.Sprintf("Planning tasks for %d gaps...", gapsFound),
+				Message:          fmt.Sprintf("Iteration %d/%d: Planning tasks for %d gaps...", iteration, c.MaxIterations, gapsFound),
 			})
 
-			planResult, err := c.planner.Plan(ctx, gapReport, c.ProjectName)
+			planClaude := c.createRunner(ctx)
+			planResult, err := c.planner.Plan(ctx, gapReport, c.ProjectName, planClaude)
 			if err != nil {
 				return fmt.Errorf("plan epics (iteration %d): %w", iteration, err)
 			}
@@ -339,7 +383,7 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 					TasksCreated:     len(planResult.TaskIDs),
 					EpicID:           planResult.EpicID,
 					Cost:             totalCost,
-					Message:          fmt.Sprintf("Executing epic %s with %d tasks...", planResult.EpicID, len(planResult.TaskIDs)),
+					Message:          fmt.Sprintf("Iteration %d/%d: Executing epic %s with %d tasks...", iteration, c.MaxIterations, planResult.EpicID, len(planResult.TaskIDs)),
 				})
 
 				completed, err := c.executeEpic(ctx, planResult.EpicID, agents)
@@ -371,7 +415,7 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 			TasksCompleted:   iterResult.TasksCompleted,
 			EpicID:           iterResult.EpicID,
 			Cost:             totalCost,
-			Message:          fmt.Sprintf("Iteration %d complete: %d/%d features, %d gaps remaining", iteration, completedFeatures, totalFeatures, gapsFound),
+			Message:          fmt.Sprintf("Iteration %d/%d complete: %d/%d features, %d gaps remaining", iteration, c.MaxIterations, completedFeatures, totalFeatures, gapsFound),
 		})
 
 		// If no gaps, we're done
@@ -392,26 +436,37 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 	}
 }
 
-// executeEpic runs the /alphie skill pattern to execute an epic.
-// It invokes Claude with the /alphie command to process the epic's tasks.
+// executeEpic runs the orchestrator directly to execute an epic's tasks.
+// It streams progress events to the TUI and tracks worker state in real-time.
 // Returns the number of tasks completed and any error.
 func (c *Controller) executeEpic(ctx context.Context, epicID string, agents int) (int, error) {
-	// Build the command to invoke Claude with /alphie skill
-	// The /alphie skill pattern expects an epic ID and handles task execution
-	prompt := fmt.Sprintf("/alphie run --epic %s --headless", epicID)
-	if agents > 0 {
-		prompt = fmt.Sprintf("/alphie run --epic %s --headless --agents %d", epicID, agents)
-	}
-
-	// Execute via Claude CLI
-	cmd := exec.CommandContext(ctx, "claude", "--print", prompt)
-	if c.RepoPath != "" {
-		cmd.Dir = c.RepoPath
-	}
-
-	output, err := cmd.CombinedOutput()
+	// Create orchestrator for this epic
+	orch, err := c.createOrchestrator(epicID, agents)
 	if err != nil {
-		return 0, fmt.Errorf("execute claude: %w (output: %s)", err, string(output))
+		return 0, fmt.Errorf("create orchestrator: %w", err)
+	}
+	defer orch.Stop()
+
+	// Subscribe to events for progress updates
+	eventsCh := orch.Events()
+
+	// Start event processing goroutine
+	eventsDone := make(chan struct{})
+	go func() {
+		defer close(eventsDone)
+		for event := range eventsCh {
+			c.handleOrchestratorEvent(event)
+		}
+	}()
+
+	// Run orchestrator (empty request since we're resuming an epic)
+	err = orch.Run(ctx, "")
+
+	// Wait for event processing to complete
+	<-eventsDone
+
+	if err != nil {
+		return 0, fmt.Errorf("orchestrator run: %w", err)
 	}
 
 	// Count completed tasks from prog client
@@ -427,8 +482,99 @@ func (c *Controller) executeEpic(ctx context.Context, epicID string, agents int)
 		return completed, nil
 	}
 
-	// If no prog client, estimate from output
-	// Look for completion indicators in the output
-	completedCount := strings.Count(string(output), "[DONE]")
-	return completedCount, nil
+	return 0, nil
+}
+
+// createOrchestrator creates a new orchestrator instance for epic execution.
+func (c *Controller) createOrchestrator(epicID string, agents int) (*orchestrator.Orchestrator, error) {
+	// Open state database
+	db, err := state.OpenProject(c.RepoPath)
+	if err != nil {
+		return nil, fmt.Errorf("open state database: %w", err)
+	}
+
+	// Run migrations
+	if err := db.Migrate(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate database: %w", err)
+	}
+
+	// Create executor
+	executor, err := agent.NewExecutor(agent.ExecutorConfig{
+		RepoPath:      c.RepoPath,
+		Model:         "sonnet",
+		RunnerFactory: c.runnerFactory,
+	})
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create executor: %w", err)
+	}
+
+	// Create Claude runners for decomposer and merger
+	decomposerClaude := c.runnerFactory.NewRunner()
+	mergerClaude := c.runnerFactory.NewRunner()
+	secondReviewerClaude := c.runnerFactory.NewRunner()
+
+	// Create orchestrator with all required dependencies
+	orch := orchestrator.New(
+		orchestrator.RequiredConfig{
+			RepoPath: c.RepoPath,
+			Tier:     models.TierBuilder,
+			Executor: executor,
+		},
+		orchestrator.WithMaxAgents(agents),
+		orchestrator.WithDecomposerClaude(decomposerClaude),
+		orchestrator.WithMergerClaude(mergerClaude),
+		orchestrator.WithSecondReviewerClaude(secondReviewerClaude),
+		orchestrator.WithRunnerFactory(c.runnerFactory),
+		orchestrator.WithStateDB(db),
+		orchestrator.WithProgClient(c.progClient),
+		orchestrator.WithResumeEpicID(epicID),
+	)
+
+	return orch, nil
+}
+
+// handleOrchestratorEvent converts orchestrator events to progress events.
+func (c *Controller) handleOrchestratorEvent(event orchestrator.OrchestratorEvent) {
+	switch event.Type {
+	case orchestrator.EventTaskStarted:
+		c.emitProgress(ProgressEvent{
+			Phase:            PhaseExecuting,
+			Iteration:        c.currentIteration,
+			MaxIterations:    c.MaxIterations,
+			FeaturesComplete: c.currentFeaturesComplete,
+			FeaturesTotal:    c.currentFeaturesTotal,
+			Message:          fmt.Sprintf("Started: %s", event.TaskTitle),
+			Cost:             event.Cost,
+			WorkersRunning:   event.WorkersRunning,
+			WorkersBlocked:   event.WorkersBlocked,
+		})
+	case orchestrator.EventTaskCompleted:
+		c.emitProgress(ProgressEvent{
+			Phase:            PhaseExecuting,
+			Iteration:        c.currentIteration,
+			MaxIterations:    c.MaxIterations,
+			FeaturesComplete: c.currentFeaturesComplete,
+			FeaturesTotal:    c.currentFeaturesTotal,
+			Message:          fmt.Sprintf("Completed: %s", event.TaskTitle),
+			Cost:             event.Cost,
+			WorkersRunning:   event.WorkersRunning,
+			WorkersBlocked:   event.WorkersBlocked,
+		})
+	case orchestrator.EventAgentProgress:
+		if event.CurrentAction != "" {
+			c.emitProgress(ProgressEvent{
+				Phase:            PhaseExecuting,
+				Iteration:        c.currentIteration,
+				MaxIterations:    c.MaxIterations,
+				FeaturesComplete: c.currentFeaturesComplete,
+				FeaturesTotal:    c.currentFeaturesTotal,
+				Message:          event.CurrentAction,
+				Cost:             event.Cost,
+				WorkersRunning:   event.WorkersRunning,
+				WorkersBlocked:   event.WorkersBlocked,
+			})
+		}
+	}
 }

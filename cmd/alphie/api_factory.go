@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -10,13 +11,24 @@ import (
 	"github.com/ShayCichocki/alphie/internal/api"
 )
 
-// createRunnerFactory creates an APIRunnerFactory for Claude execution.
-// This always uses direct Anthropic API calls.
-func createRunnerFactory() (agent.ClaudeRunnerFactory, error) {
+// ProcessRunnerFactory creates subprocess-based ClaudeProcess runners.
+type ProcessRunnerFactory struct{}
+
+// NewRunner creates a new ClaudeProcess instance.
+func (f *ProcessRunnerFactory) NewRunner() agent.ClaudeRunner {
+	return agent.NewClaudeProcess(context.Background())
+}
+
+// createRunnerFactory creates a ClaudeRunnerFactory for Claude execution.
+// If useCLI is true, uses subprocess (claude CLI). Otherwise uses API.
+func createRunnerFactory(useCLI bool) (agent.ClaudeRunnerFactory, error) {
+	if useCLI {
+		return &ProcessRunnerFactory{}, nil
+	}
 	return createRunnerFactoryWithModel(anthropic.ModelClaudeSonnet4_20250514)
 }
 
-// createRunnerFactoryWithModel creates a factory with a specific model.
+// createRunnerFactoryWithModel creates an API factory with a specific model.
 func createRunnerFactoryWithModel(model anthropic.Model) (agent.ClaudeRunnerFactory, error) {
 	apiClient, err := api.NewClient(api.ClientConfig{
 		Model: model,

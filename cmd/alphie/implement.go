@@ -19,10 +19,11 @@ var (
 	implementDryRun          bool
 	implementResume          bool
 	implementProject         string
+	implementUseCLI          bool
 )
 
 var implementCmd = &cobra.Command{
-	Use:   "implement <arch.md>",
+	Use:   "implement <spec.md|spec.xml>",
 	Short: "Implement architecture specification iteratively",
 	Long: `Implement an architecture specification by iterating through audit-plan-execute cycles.
 
@@ -33,6 +34,10 @@ This command orchestrates the full architecture implementation loop:
   4. Execute tasks using parallel agents
   5. Repeat until complete or stop conditions are met
 
+Supported formats:
+  - Markdown (.md) - Standard markdown with sections and headers
+  - XML (.xml) - Custom XML schemas with features/requirements
+
 Stop conditions:
   - All features implemented (100% completion)
   - Maximum iterations reached (--max-iterations)
@@ -40,7 +45,8 @@ Stop conditions:
   - No progress for N iterations (--no-converge-after)
 
 Examples:
-  alphie implement docs/architecture.md                    # Basic run with defaults
+  alphie implement docs/architecture.md                    # Markdown spec
+  alphie implement spec.xml                                # XML spec
   alphie implement spec.md --agents 5                      # Use 5 concurrent agents
   alphie implement spec.md --max-iterations 20             # Allow more iterations
   alphie implement spec.md --budget 10.00                  # Cap cost at $10
@@ -58,6 +64,7 @@ func init() {
 	implementCmd.Flags().BoolVar(&implementDryRun, "dry-run", false, "Show plan without executing")
 	implementCmd.Flags().BoolVar(&implementResume, "resume", false, "Resume from checkpoint")
 	implementCmd.Flags().StringVar(&implementProject, "project", "", "Prog project name (defaults to directory name)")
+	implementCmd.Flags().BoolVar(&implementUseCLI, "cli", false, "Use Claude CLI subprocess instead of API")
 }
 
 func runImplement(cmd *cobra.Command, args []string) error {
@@ -123,12 +130,9 @@ func runImplement(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create progress callback that sends updates to TUI
 	progressCallback := func(event architect.ProgressEvent) {
-		// Map phase to string for display
 		phaseStr := string(event.Phase)
 
-		// Send state update to TUI
 		program.Send(tui.ImplementUpdateMsg{
 			State: tui.ImplementState{
 				Iteration:        event.Iteration,
@@ -138,6 +142,8 @@ func runImplement(cmd *cobra.Command, args []string) error {
 				Cost:             event.Cost,
 				CostBudget:       event.CostBudget,
 				CurrentPhase:     phaseStr,
+				WorkersRunning:   event.WorkersRunning,
+				WorkersBlocked:   event.WorkersBlocked,
 			},
 		})
 
@@ -149,6 +155,12 @@ func runImplement(cmd *cobra.Command, args []string) error {
 		})
 	}
 
+	// Create runner factory (CLI subprocess or API)
+	runnerFactory, err := createRunnerFactory(implementUseCLI)
+	if err != nil {
+		return fmt.Errorf("create runner factory: %w", err)
+	}
+
 	// Create and configure the controller
 	controller := architect.NewController(
 		implementMaxIterations,
@@ -157,6 +169,7 @@ func runImplement(cmd *cobra.Command, args []string) error {
 		architect.WithRepoPath(repoPath),
 		architect.WithProjectName(projectName),
 		architect.WithProgressCallback(progressCallback),
+		architect.WithRunnerFactory(runnerFactory),
 	)
 
 	// Run controller in background goroutine

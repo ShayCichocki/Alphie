@@ -55,10 +55,9 @@ func (o *Orchestrator) runLoop(ctx context.Context) error {
 					outcome := o.handleTaskCompletion(ctx, completedTask.taskID, result, completedTask.startTime)
 					// Log outcome for debugging
 					o.logger.Log("[runLoop] task %s completed with outcome: %s", completedTask.taskID, outcome.Status.String())
-					// Only return error for fatal conditions (merge failures that should stop the session)
-					if outcome.Status == OutcomeMergeFailed && outcome.Error != nil {
-						return fmt.Errorf("handle completion for task %s: %w", completedTask.taskID, outcome.Error)
-					}
+					// Note: Merge failures are logged and tracked but don't stop the session.
+					// The task is marked as failed and other agents continue working.
+					// Only fatal orchestrator errors should stop the runLoop.
 				}
 			}
 
@@ -116,8 +115,10 @@ type inflight struct {
 
 // spawnAgents spawns agents for the given ready tasks using the AgentSpawner.
 func (o *Orchestrator) spawnAgents(ctx context.Context, ready []*models.Task, inflightTasks map[string]*inflight, inflightMu *sync.Mutex, completionCh chan string) error {
+	inflightMu.Lock()
+	workersRunning := len(inflightTasks)
+	inflightMu.Unlock()
 
-	// Stagger spawns to avoid Claude CLI startup contention
 	for i, task := range ready {
 		// Add delay between parallel agent spawns (skip first)
 		if i > 0 {
@@ -166,11 +167,12 @@ func (o *Orchestrator) spawnAgents(ctx context.Context, ready []*models.Task, in
 		// Create agent context
 		taskCtx, taskCancel := context.WithCancel(ctx)
 
-		// Spawn agent using the spawner (handles UUID, scheduler/collision registration, execution)
 		agentID, resultCh := o.spawner.Spawn(taskCtx, task, SpawnOptions{
-			Tier:      o.config.Tier,
-			Learnings: taskLearnings,
-			Baseline:  o.config.Baseline,
+			Tier:           o.config.Tier,
+			Learnings:      taskLearnings,
+			Baseline:       o.config.Baseline,
+			WorkersRunning: workersRunning + i + 1,
+			WorkersBlocked: 0,
 		})
 
 		// Create agent model for state persistence

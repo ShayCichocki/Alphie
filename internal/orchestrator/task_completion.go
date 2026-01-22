@@ -188,31 +188,35 @@ func (o *Orchestrator) handleSuccessfulTask(ctx context.Context, task *models.Ta
 
 // handleFailedTask handles a task that failed execution.
 func (o *Orchestrator) handleFailedTask(task *models.Task, result *agent.ExecutionResult) {
-	// Increment execution count - tracks total attempts across session recovery
 	task.ExecutionCount++
 
-	// Scout override gate: allow questions after N failed attempts
 	if o.overrideGate != nil && o.config.Tier == models.TierScout {
 		if o.overrideGate.CanAskQuestionWithCount(task.ExecutionCount) {
 			log.Printf("[orchestrator] task %s has %d failed attempts, Scout can now ask questions", task.ID, task.ExecutionCount)
 		}
 	}
 
-	// Mark task as failed
-	task.Status = models.TaskStatusFailed
+	const maxRetries = 3
+	shouldRetry := task.ExecutionCount < maxRetries
 
-	// Update state persistence (includes ExecutionCount)
+	if shouldRetry {
+		task.Status = models.TaskStatusPending
+		task.AssignedTo = ""
+		log.Printf("[orchestrator] task %s failed (attempt %d/%d), will retry", task.ID, task.ExecutionCount, maxRetries)
+	} else {
+		task.Status = models.TaskStatusFailed
+		log.Printf("[orchestrator] task %s failed after %d attempts, no more retries", task.ID, task.ExecutionCount)
+	}
+
 	o.updateTaskState(task)
 	o.updateAgentState(result.AgentID, "failed")
 
-	// Check learnings for known fixes to this error
 	if o.learnings != nil && result.Error != "" {
 		learnings, err := o.learnings.OnFailure(result.Error)
 		if err != nil {
 			log.Printf("[orchestrator] warning: failed to check learnings for error: %v", err)
 		} else if len(learnings) > 0 {
 			log.Printf("[orchestrator] found %d learnings for error in task %s", len(learnings), task.ID)
-			// Include suggested fixes in the event message
 			var suggestions []string
 			for _, l := range learnings {
 				suggestions = append(suggestions, l.Action)
@@ -221,17 +225,19 @@ func (o *Orchestrator) handleFailedTask(task *models.Task, result *agent.Executi
 		}
 	}
 
-	// Update prog task status to blocked with failure reason
-	o.progCoord.BlockTask(task.ID, result.Error)
+	if shouldRetry {
+		o.progCoord.LogTask(task.ID, fmt.Sprintf("Attempt %d failed: %s. Retrying...", task.ExecutionCount, result.Error))
+	} else {
+		o.progCoord.BlockTask(task.ID, result.Error)
+	}
 
-	// Emit failure event
 	o.emitEvent(OrchestratorEvent{
 		Type:      EventTaskFailed,
 		TaskID:    task.ID,
 		TaskTitle: task.Title,
 		ParentID:  task.ParentID,
 		AgentID:   result.AgentID,
-		Message:   fmt.Sprintf("Task failed: %s", task.Title),
+		Message:   fmt.Sprintf("Task failed: %s (attempt %d/%d)", task.Title, task.ExecutionCount, maxRetries),
 		Error:     fmt.Errorf("%s", result.Error),
 		Timestamp: time.Now(),
 		LogFile:   result.LogFile,

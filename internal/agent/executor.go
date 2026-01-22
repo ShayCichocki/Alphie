@@ -123,12 +123,12 @@ func NewExecutor(cfg ExecutorConfig) (*Executor, error) {
 
 	model := cfg.Model
 	if model == "" {
-		model = "claude-sonnet-4-20250514"
+		model = "sonnet"
 	}
 
 	taskTimeout := cfg.TaskTimeout
 	if taskTimeout == 0 {
-		taskTimeout = 10 * time.Minute // Default 10 minute timeout
+		taskTimeout = 20 * time.Minute
 	}
 
 	// RunnerFactory is always required - API is the only execution path

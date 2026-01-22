@@ -15,8 +15,12 @@ type ModelPricing struct {
 
 // DefaultModelPricing contains pricing for known Claude models.
 var DefaultModelPricing = map[string]ModelPricing{
+	"opus":   {InputPerMillion: 15.00, OutputPerMillion: 75.00},
+	"sonnet": {InputPerMillion: 3.00, OutputPerMillion: 15.00},
+	"haiku":  {InputPerMillion: 0.80, OutputPerMillion: 4.00},
+	// Full model IDs for backward compatibility
 	"claude-opus-4-5-20251101":   {InputPerMillion: 15.00, OutputPerMillion: 75.00},
-	"claude-sonnet-4-20250514":   {InputPerMillion: 3.00, OutputPerMillion: 15.00},
+	"claude-sonnet-4-5-20250514": {InputPerMillion: 3.00, OutputPerMillion: 15.00},
 	"claude-3-5-sonnet-20241022": {InputPerMillion: 3.00, OutputPerMillion: 15.00},
 	"claude-3-5-haiku-20241022":  {InputPerMillion: 0.80, OutputPerMillion: 4.00},
 }

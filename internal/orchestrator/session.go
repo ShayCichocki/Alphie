@@ -129,6 +129,17 @@ func (m *SessionBranchManager) MergeToMain() error {
 		mainBranch = "master"
 	}
 
+	// Commit any pending changes on session branch before merging to main
+	// This catches any uncommitted changes from agent merges
+	if _, err := m.git.Run("add", "."); err != nil {
+		// If add fails, it might be because there are no changes - that's OK
+		// But we should still try to continue
+	}
+	if _, err := m.git.Run("commit", "-m", fmt.Sprintf("Auto-commit pending changes before merging session %s", m.sessionID)); err != nil {
+		// If commit fails, it might be because there are no changes - that's OK
+		// Continue with the merge
+	}
+
 	// Checkout the main branch
 	if err := m.git.CheckoutBranch(mainBranch); err != nil {
 		return fmt.Errorf("failed to checkout %s: %w", mainBranch, err)

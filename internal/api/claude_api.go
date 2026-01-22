@@ -28,6 +28,7 @@ type ClaudeAPI struct {
 	// Config
 	model         anthropic.Model
 	maxIterations int
+	temperature   *float64
 }
 
 // StreamEventCompat is compatible with the agent.StreamEvent type.
@@ -54,6 +55,7 @@ type ClaudeAPIConfig struct {
 	Notifications *NotificationManager
 	Model         anthropic.Model
 	MaxIterations int
+	Temperature   *float64 // Optional temperature (0.0-1.0)
 }
 
 // NewClaudeAPI creates a new API-based Claude runner.
@@ -73,6 +75,7 @@ func NewClaudeAPI(cfg ClaudeAPIConfig) *ClaudeAPI {
 		notifs:        cfg.Notifications,
 		model:         model,
 		maxIterations: maxIter,
+		temperature:   cfg.Temperature,
 		outputCh:      make(chan StreamEventCompat, 100),
 		done:          make(chan struct{}),
 	}
@@ -86,7 +89,8 @@ func (c *ClaudeAPI) Start(prompt, workDir string) error {
 
 // StartOptions mirrors agent.StartOptions.
 type StartOptionsAPI struct {
-	Model string
+	Model       string
+	Temperature *float64
 }
 
 // StartWithOptions launches with additional options.
@@ -109,6 +113,11 @@ func (c *ClaudeAPI) StartWithOptions(prompt, workDir string, opts *StartOptionsA
 	model := c.model
 	if opts != nil && opts.Model != "" {
 		model = anthropic.Model(opts.Model)
+	}
+
+	// Override temperature if specified
+	if opts != nil && opts.Temperature != nil {
+		c.temperature = opts.Temperature
 	}
 
 	// Start the agent loop in a goroutine
@@ -156,7 +165,7 @@ func (c *ClaudeAPI) runLoop(prompt string, model anthropic.Model) {
 		}
 
 		// Make API call
-		resp, err := c.client.sdk().Messages.New(c.ctx, anthropic.MessageNewParams{
+		params := anthropic.MessageNewParams{
 			Model:     model,
 			MaxTokens: 8192,
 			System: []anthropic.TextBlockParam{
@@ -164,7 +173,14 @@ func (c *ClaudeAPI) runLoop(prompt string, model anthropic.Model) {
 			},
 			Messages: messages,
 			Tools:    ToolDefinitions(),
-		})
+		}
+
+		// Add temperature if specified
+		if c.temperature != nil {
+			params.Temperature = anthropic.Float(*c.temperature)
+		}
+
+		resp, err := c.client.sdk().Messages.New(c.ctx, params)
 		if err != nil {
 			c.emitError(fmt.Sprintf("API error: %v", err))
 			return
@@ -308,4 +324,9 @@ func (c *ClaudeAPI) Stderr() string {
 // PID returns the process ID. For API mode, returns 0.
 func (c *ClaudeAPI) PID() int {
 	return 0
+}
+
+// Client returns the underlying API client for token tracking.
+func (c *ClaudeAPI) Client() *Client {
+	return c.client
 }

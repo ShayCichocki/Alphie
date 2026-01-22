@@ -62,7 +62,7 @@ func TestPlanEmptyGaps(t *testing.T) {
 	ctx := context.Background()
 
 	// Test with nil gaps
-	result, err := planner.Plan(ctx, nil, "test-project")
+	result, err := planner.Plan(ctx, nil, "test-project", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestPlanEmptyGaps(t *testing.T) {
 
 	// Test with empty gaps list
 	emptyReport := &GapReport{Gaps: []Gap{}}
-	result, err = planner.Plan(ctx, emptyReport, "test-project")
+	result, err = planner.Plan(ctx, emptyReport, "test-project", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestPlanWithMissingGaps(t *testing.T) {
 		Summary: "Two features are missing",
 	}
 
-	result, err := planner.Plan(ctx, gaps, "test-project")
+	result, err := planner.Plan(ctx, gaps, "test-project", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestPlanWithPartialGaps(t *testing.T) {
 		Summary: "One feature is partial",
 	}
 
-	result, err := planner.Plan(ctx, gaps, "test-project")
+	result, err := planner.Plan(ctx, gaps, "test-project", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestPlanWithMixedGaps(t *testing.T) {
 		Summary: "Mixed gaps",
 	}
 
-	result, err := planner.Plan(ctx, gaps, "test-project")
+	result, err := planner.Plan(ctx, gaps, "test-project", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -28,6 +28,7 @@ var (
 	runParallel    bool
 	runSingle      bool
 	runPassthrough bool
+	runUseCLI      bool
 )
 
 var runCmd = &cobra.Command{
@@ -75,6 +76,7 @@ func init() {
 	runCmd.Flags().BoolVar(&runParallel, "parallel", false, "Force parallel mode: decompose and run multiple agents")
 	runCmd.Flags().BoolVar(&runSingle, "single", false, "Force single mode: decompose but run one agent at a time")
 	runCmd.Flags().BoolVar(&runPassthrough, "passthrough", false, "Bypass orchestration, run Claude directly (debugging/cost control)")
+	runCmd.Flags().BoolVar(&runUseCLI, "cli", false, "Use Claude CLI subprocess instead of API")
 }
 
 func runTask(cmd *cobra.Command, args []string) (retErr error) {
@@ -276,7 +278,7 @@ func runTask(cmd *cobra.Command, args []string) (retErr error) {
 	}
 
 	// Create runner factory for direct API calls (needed by executor)
-	runnerFactory, err := createRunnerFactory()
+	runnerFactory, err := createRunnerFactory(runUseCLI)
 	if err != nil {
 		return fmt.Errorf("create runner factory: %w", err)
 	}

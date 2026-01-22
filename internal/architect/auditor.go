@@ -87,7 +87,7 @@ type Auditor struct {
 // NewAuditor creates a new Auditor instance.
 func NewAuditor() *Auditor {
 	return &Auditor{
-		maxFilesToScan: 50,
+		maxFilesToScan: 100, // Increased from 50 to scan more files
 	}
 }
 
@@ -111,8 +111,12 @@ func (a *Auditor) Audit(ctx context.Context, spec *ArchSpec, repoPath string, cl
 	// Build the audit prompt
 	prompt := a.buildAuditPrompt(spec, codeContext)
 
-	// Start Claude process
-	if err := claude.Start(prompt, repoPath); err != nil {
+	// Start Claude process with temperature=0 for deterministic auditing
+	temp := 0.0
+	opts := &agent.StartOptions{
+		Temperature: &temp,
+	}
+	if err := claude.StartWithOptions(prompt, repoPath, opts); err != nil {
 		return nil, fmt.Errorf("start claude process: %w", err)
 	}
 
@@ -141,6 +145,9 @@ func (a *Auditor) Audit(ctx context.Context, spec *ArchSpec, repoPath string, cl
 	if err != nil {
 		return nil, fmt.Errorf("parse audit response: %w", err)
 	}
+
+	// Debug logging removed - interferes with TUI
+	// Audit results are sent to TUI via progress callbacks
 
 	return report, nil
 }
@@ -243,9 +250,11 @@ func (a *Auditor) buildAuditPrompt(spec *ArchSpec, codeContext string) string {
 
 	sb.WriteString("## Instructions\n\n")
 	sb.WriteString("For each feature, examine the codebase and determine:\n")
-	sb.WriteString("- Status: COMPLETE (fully implemented), PARTIAL (partially implemented), or MISSING (not implemented)\n")
+	sb.WriteString("- Status: COMPLETE (core functionality implemented and working), PARTIAL (some implementation exists but incomplete), or MISSING (not implemented)\n")
 	sb.WriteString("- Evidence: File references and code snippets supporting your assessment\n")
 	sb.WriteString("- Reasoning: Why you reached this conclusion\n\n")
+	sb.WriteString("IMPORTANT: Mark a feature as COMPLETE if its core functionality is implemented, even if minor details or edge cases remain. ")
+	sb.WriteString("Only mark as PARTIAL if significant portions are missing or broken.\n\n")
 
 	sb.WriteString("Respond with valid JSON in this exact format:\n")
 	sb.WriteString("```json\n")

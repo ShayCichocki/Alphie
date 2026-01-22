@@ -33,7 +33,8 @@ func (a *ClaudeAPIAdapter) StartWithOptions(prompt, workDir string, opts *StartO
 	var apiOpts *api.StartOptionsAPI
 	if opts != nil {
 		apiOpts = &api.StartOptionsAPI{
-			Model: opts.Model,
+			Model:       opts.Model,
+			Temperature: opts.Temperature,
 		}
 	}
 	if err := a.api.StartWithOptions(prompt, workDir, apiOpts); err != nil {
@@ -102,6 +103,11 @@ func (a *ClaudeAPIAdapter) Stderr() string {
 // For API mode, returns 0.
 func (a *ClaudeAPIAdapter) PID() int {
 	return a.api.PID()
+}
+
+// Client returns the underlying API client for token tracking.
+func (a *ClaudeAPIAdapter) Client() *api.Client {
+	return a.api.Client()
 }
 
 // Verify ClaudeAPIAdapter implements ClaudeRunner at compile time.

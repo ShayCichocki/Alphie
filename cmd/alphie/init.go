@@ -287,7 +287,7 @@ func ensureInitialCommit(repoPath string) error {
 	gitignorePath := filepath.Join(repoPath, ".gitignore")
 	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
 		// Create minimal .gitignore
-		content := "# Alphie\n.alphie/state.db*\n.alphie/learnings.db*\n.alphie/logs/\n"
+		content := "# Alphie\n.alphie/state.db*\n.alphie/learnings.db*\n.alphie/logs/\nalphie\n"
 		if err := os.WriteFile(gitignorePath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("creating .gitignore: %w", err)
 		}
@@ -369,6 +369,7 @@ func updateGitignore(repoPath string) error {
 		".alphie/state.db*",
 		".alphie/learnings.db*",
 		".alphie/logs/",
+		"alphie",
 	}
 
 	needsUpdate := false
