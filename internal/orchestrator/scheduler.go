@@ -29,6 +29,10 @@ type Scheduler struct {
 	// greenfield indicates whether this is a greenfield project.
 	// In greenfield mode, tasks that might touch root files are serialized.
 	greenfield bool
+	// orchestrator is a reference to the parent orchestrator for conflict checking.
+	orchestrator *Orchestrator
+	// trigger is a channel to signal the scheduler to check for work.
+	trigger chan struct{}
 	// mu protects all mutable fields.
 	mu sync.RWMutex
 }
@@ -40,7 +44,15 @@ func NewScheduler(graph *graph.DependencyGraph, tier models.Tier, maxAgents int)
 		tier:      tier,
 		running:   make(map[string]*models.Agent),
 		maxAgents: maxAgents,
+		trigger:   make(chan struct{}, 1),
 	}
+}
+
+// SetOrchestrator sets a reference to the parent orchestrator for merge conflict checking.
+func (s *Scheduler) SetOrchestrator(o *Orchestrator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.orchestrator = o
 }
 
 // SetCollisionChecker sets the collision checker for this scheduler.
@@ -63,9 +75,16 @@ func (s *Scheduler) SetGreenfield(greenfield bool) {
 // - Tasks with no unmet dependencies (from the graph)
 // - Available agent slots (maxAgents - running count)
 // - Collision avoidance rules (if a collision checker is set)
+// - Merge conflict blocking (if orchestrator has active conflict)
 func (s *Scheduler) Schedule() []*models.Task {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	// BLOCK ALL SCHEDULING if there's an active merge conflict
+	if s.orchestrator != nil && s.orchestrator.HasMergeConflict() {
+		debugLog("[scheduler] BLOCKED: merge conflict active - no tasks scheduled")
+		return nil
+	}
 
 	// Calculate available slots.
 	availableSlots := s.maxAgents - len(s.running)

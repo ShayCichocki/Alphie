@@ -39,6 +39,28 @@ func (r *ExecRunner) runSilent(args ...string) error {
 	return nil
 }
 
+// runInDir executes a git command in a specific directory and returns output.
+func (r *ExecRunner) runInDir(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, string(out))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// runSilentInDir executes a git command in a specific directory and ignores output.
+func (r *ExecRunner) runSilentInDir(dir string, args ...string) error {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, string(out))
+	}
+	return nil
+}
+
 // Run executes an arbitrary git command with the given arguments.
 // This is the public version of run() for generic git operations.
 func (r *ExecRunner) Run(args ...string) (string, error) {
@@ -315,6 +337,21 @@ func (r *ExecRunner) CheckoutOurs(path string) error {
 // CheckoutTheirs checks out the "theirs" version of a conflicted file.
 func (r *ExecRunner) CheckoutTheirs(path string) error {
 	return r.runSilent("checkout", "--theirs", path)
+}
+
+// StatusInDir returns git status output for a specific directory (e.g., worktree).
+func (r *ExecRunner) StatusInDir(dir string) (string, error) {
+	return r.runInDir(dir, "status", "--porcelain")
+}
+
+// ResetHard resets a worktree to HEAD, discarding all changes.
+func (r *ExecRunner) ResetHard(dir string) error {
+	return r.runSilentInDir(dir, "reset", "--hard", "HEAD")
+}
+
+// Clean removes untracked files from a worktree.
+func (r *ExecRunner) Clean(dir string) error {
+	return r.runSilentInDir(dir, "clean", "-fd")
 }
 
 // Verify ExecRunner implements Runner at compile time.

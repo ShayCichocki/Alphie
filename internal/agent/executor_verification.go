@@ -37,7 +37,8 @@ func (e *Executor) generateDraftContract(
 	projectCtx := verification.GetProjectContext(workDir)
 
 	var draftErr error
-	vc.draftContract, draftErr = verifyGen.DraftContract(ctx, verificationIntent, fileBoundaries, projectCtx)
+	// expectedFiles is empty initially - we don't know what will be created yet
+	vc.draftContract, draftErr = verifyGen.DraftContract(ctx, verificationIntent, nil, fileBoundaries, projectCtx)
 	if draftErr == nil && vc.draftContract != nil {
 		// Store draft contract before implementation
 		if saveErr := vc.contractStorage.SaveDraft(taskID, vc.draftContract); saveErr != nil {

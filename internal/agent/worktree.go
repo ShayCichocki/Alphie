@@ -109,6 +109,7 @@ func NewWorktreeManagerWithRunner(baseDir, repoPath string, runner git.Runner) (
 
 // Create creates a new worktree for the given agent.
 // Returns the created Worktree with path and branch information.
+// If a worktree already exists at the path, it will be reused if clean or reset if dirty.
 func (m *WorktreeManager) Create(agentID string) (*Worktree, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -120,9 +121,62 @@ func (m *WorktreeManager) Create(agentID string) (*Worktree, error) {
 	branchName := fmt.Sprintf("agent-%s", agentID)
 	worktreePath := filepath.Join(m.baseDir, branchName)
 
-	// Create the worktree with a new branch
-	if err := m.git.WorktreeAddNewBranch(worktreePath, branchName); err != nil {
-		return nil, fmt.Errorf("create worktree: %w", err)
+	// Check if worktree directory already exists
+	if _, err := os.Stat(worktreePath); err == nil {
+		// Directory exists - check if it's a valid worktree
+		isWorktree, err := m.isValidWorktree(worktreePath)
+		if err != nil {
+			return nil, fmt.Errorf("check worktree validity: %w", err)
+		}
+
+		if isWorktree {
+			// Check if worktree is clean (no uncommitted changes)
+			clean, err := m.isWorktreeClean(worktreePath)
+			if err != nil {
+				return nil, fmt.Errorf("check worktree clean status: %w", err)
+			}
+
+			if clean {
+				// Reuse existing clean worktree
+				return &Worktree{
+					Path:       worktreePath,
+					BranchName: branchName,
+					AgentID:    agentID,
+					CreatedAt:  time.Now(),
+				}, nil
+			}
+
+			// Worktree exists but has uncommitted changes - reset it
+			if err := m.resetWorktreeToClean(worktreePath); err != nil {
+				return nil, fmt.Errorf("reset dirty worktree: %w", err)
+			}
+
+			return &Worktree{
+				Path:       worktreePath,
+				BranchName: branchName,
+				AgentID:    agentID,
+				CreatedAt:  time.Now(),
+			}, nil
+		}
+
+		// Directory exists but is not a worktree - remove it
+		if err := os.RemoveAll(worktreePath); err != nil {
+			return nil, fmt.Errorf("remove invalid directory: %w", err)
+		}
+	}
+
+	// Create new worktree - handle branch already exists case
+	err := m.git.WorktreeAddNewBranch(worktreePath, branchName)
+	if err != nil {
+		// Check if error is because branch already exists
+		if strings.Contains(err.Error(), "already exists") {
+			// Branch exists - try adding worktree to existing branch
+			if err := m.git.WorktreeAdd(worktreePath, branchName); err != nil {
+				return nil, fmt.Errorf("add worktree to existing branch: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("create worktree: %w", err)
+		}
 	}
 
 	return &Worktree{
@@ -131,6 +185,63 @@ func (m *WorktreeManager) Create(agentID string) (*Worktree, error) {
 		AgentID:    agentID,
 		CreatedAt:  time.Now(),
 	}, nil
+}
+
+// isValidWorktree checks if a directory is a valid git worktree.
+// Worktrees have a .git file (not directory) that points to the main repo.
+func (m *WorktreeManager) isValidWorktree(path string) (bool, error) {
+	gitFile := filepath.Join(path, ".git")
+	info, err := os.Stat(gitFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	// Worktrees have a .git file, not a directory
+	return !info.IsDir(), nil
+}
+
+// isWorktreeClean checks if a worktree has uncommitted changes.
+// Returns true if the worktree is clean (no changes).
+func (m *WorktreeManager) isWorktreeClean(path string) (bool, error) {
+	// Cast to *ExecRunner to access StatusInDir method
+	runner, ok := m.git.(*git.ExecRunner)
+	if !ok {
+		// If not using ExecRunner, fall back to assuming it needs reset
+		return false, nil
+	}
+
+	output, err := runner.StatusInDir(path)
+	if err != nil {
+		return false, fmt.Errorf("git status: %w", err)
+	}
+
+	// Output is empty or "nothing to commit" means clean
+	trimmed := strings.TrimSpace(output)
+	return len(trimmed) == 0 || strings.Contains(output, "nothing to commit"), nil
+}
+
+// resetWorktreeToClean resets a worktree to a clean state.
+// Discards all uncommitted changes and removes untracked files.
+func (m *WorktreeManager) resetWorktreeToClean(path string) error {
+	// Cast to *ExecRunner to access ResetHard and Clean methods
+	runner, ok := m.git.(*git.ExecRunner)
+	if !ok {
+		return fmt.Errorf("git runner does not support worktree-specific operations")
+	}
+
+	// Reset all changes
+	if err := runner.ResetHard(path); err != nil {
+		return fmt.Errorf("git reset --hard: %w", err)
+	}
+
+	// Clean untracked files
+	if err := runner.Clean(path); err != nil {
+		return fmt.Errorf("git clean: %w", err)
+	}
+
+	return nil
 }
 
 // Remove removes a worktree at the given path.

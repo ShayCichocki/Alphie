@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -259,19 +260,47 @@ func (r *ContractRunner) checkFileConstraints(ctx context.Context, fc FileConstr
 		results = append(results, result)
 	}
 
-	// Check must_not_exist
-	for _, path := range fc.MustNotExist {
+	// Check must_not_exist (supports glob patterns)
+	for _, pattern := range fc.MustNotExist {
 		result := FileResult{
-			Path:       path,
+			Path:       pattern,
 			Constraint: "must_not_exist",
 		}
 
-		if !r.exec.Exists(ctx, r.workDir, path) {
-			result.Passed = true
-			result.Message = "file does not exist (as expected)"
+		// Check if pattern contains wildcards (* or ?)
+		hasWildcard := strings.ContainsAny(pattern, "*?")
+
+		if hasWildcard {
+			// Use glob to find matching files
+			fullPattern := filepath.Join(r.workDir, pattern)
+			matches, err := filepath.Glob(fullPattern)
+
+			if err != nil {
+				result.Passed = false
+				result.Message = fmt.Sprintf("Failed to check pattern: %v", err)
+			} else if len(matches) > 0 {
+				// Files found that shouldn't exist - report them
+				relativeMatches := make([]string, 0, len(matches))
+				for _, m := range matches {
+					rel, _ := filepath.Rel(r.workDir, m)
+					relativeMatches = append(relativeMatches, rel)
+				}
+				result.Passed = false
+				result.Message = fmt.Sprintf("Files created outside boundaries (found: %v)", strings.Join(relativeMatches, ", "))
+			} else {
+				// No matches - pattern correctly prevents files
+				result.Passed = true
+				result.Message = "no files match pattern (as expected)"
+			}
 		} else {
-			result.Passed = false
-			result.Message = "file exists but should not"
+			// Exact path check (backward compatible)
+			if !r.exec.Exists(ctx, r.workDir, pattern) {
+				result.Passed = true
+				result.Message = "file does not exist (as expected)"
+			} else {
+				result.Passed = false
+				result.Message = "file exists but should not"
+			}
 		}
 		results = append(results, result)
 	}

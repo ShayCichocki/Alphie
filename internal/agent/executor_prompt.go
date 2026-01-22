@@ -29,6 +29,20 @@ func (e *Executor) buildPrompt(task *models.Task, tier models.Tier, opts *Execut
 		sb.WriteString("\n")
 	}
 
+	// Add file boundary constraints if specified
+	if len(task.FileBoundaries) > 0 {
+		sb.WriteString("\n## CRITICAL: File Boundary Constraints\n\n")
+		sb.WriteString("You MUST ONLY create or modify files within these boundaries:\n\n")
+		for _, boundary := range task.FileBoundaries {
+			sb.WriteString(fmt.Sprintf("- `%s`\n", boundary))
+		}
+		sb.WriteString("\n**DO NOT**:\n")
+		sb.WriteString("- Create files outside these directories\n")
+		sb.WriteString("- Create files at project root unless boundaries include it\n")
+		sb.WriteString("- Move or copy files to locations outside boundaries\n\n")
+		sb.WriteString("Violating these constraints will cause verification to fail.\n")
+	}
+
 	sb.WriteString("\nTier: ")
 	sb.WriteString(string(tier))
 	sb.WriteString("\n")

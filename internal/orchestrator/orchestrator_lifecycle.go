@@ -73,6 +73,7 @@ func (o *Orchestrator) Run(ctx context.Context, request string) error {
 	o.scheduler = NewScheduler(o.graph, o.config.Tier, o.config.MaxAgents)
 	o.scheduler.SetCollisionChecker(o.collision)
 	o.scheduler.SetGreenfield(o.config.Greenfield)
+	o.scheduler.SetOrchestrator(o) // For merge conflict checking
 
 	// Wire scheduler into spawner (scheduler wasn't available at construction)
 	o.spawner.SetScheduler(o.scheduler)
@@ -163,7 +164,7 @@ func (o *Orchestrator) createMergeQueue() *MergeQueue {
 		return NewSemanticMerger(freshClaude, o.config.RepoPath)
 	}
 
-	return NewMergeQueueWithPolicy(
+	mq := NewMergeQueueWithPolicy(
 		o.merger,
 		o.semanticMerger,
 		semanticMergerFactory,
@@ -174,6 +175,17 @@ func (o *Orchestrator) createMergeQueue() *MergeQueue {
 		o.emitter.Channel(),
 		o.config.Policy,
 	)
+
+	// Set orchestrator and git runner on the processor for merge conflict resolution
+	processor := mq.GetProcessor()
+	if processor != nil {
+		processor.SetOrchestrator(o)
+		if o.merger != nil {
+			processor.SetGitRunner(o.merger.GitRunner())
+		}
+	}
+
+	return mq
 }
 
 // handleRunError cleans up after a run error.

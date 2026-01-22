@@ -274,6 +274,69 @@ func (g *Generator) GenerateMinimal(intent string, modifiedFiles []string) *Veri
 	return contract
 }
 
+// generateMustNotExistFromBoundaries generates must_not_exist patterns from file boundaries.
+// This prevents agents from creating files at wrong directory levels (e.g., creating "auth/"
+// at project root when they should create "backend/src/auth/").
+func (g *Generator) generateMustNotExistFromBoundaries(fileBoundaries []string) []string {
+	var constraints []string
+
+	if len(fileBoundaries) == 0 {
+		return constraints
+	}
+
+	seenConstraints := make(map[string]bool)
+
+	for _, boundary := range fileBoundaries {
+		// Clean and split the boundary path
+		boundary = strings.Trim(boundary, "/")
+		parts := strings.Split(boundary, "/")
+
+		if len(parts) == 0 {
+			continue
+		}
+
+		// Strategy: For boundary "backend/src/auth/", forbid:
+		// 1. "auth/*" (last component at root)
+		// 2. "src/auth/*" (last two components at root)
+		// This catches cases where agent creates files too high in hierarchy
+
+		if len(parts) >= 1 {
+			// Forbid last directory component at root
+			lastComponent := parts[len(parts)-1]
+			pattern := lastComponent + "/*"
+			if !seenConstraints[pattern] {
+				constraints = append(constraints, pattern)
+				seenConstraints[pattern] = true
+			}
+		}
+
+		if len(parts) >= 2 {
+			// Forbid last two components at root
+			secondLast := parts[len(parts)-2]
+			lastComponent := parts[len(parts)-1]
+			pattern := secondLast + "/" + lastComponent + "/*"
+			if !seenConstraints[pattern] {
+				constraints = append(constraints, pattern)
+				seenConstraints[pattern] = true
+			}
+		}
+
+		if len(parts) >= 3 {
+			// Forbid at one level up
+			thirdLast := parts[len(parts)-3]
+			secondLast := parts[len(parts)-2]
+			lastComponent := parts[len(parts)-1]
+			pattern := thirdLast + "/" + secondLast + "/" + lastComponent + "/*"
+			if !seenConstraints[pattern] {
+				constraints = append(constraints, pattern)
+				seenConstraints[pattern] = true
+			}
+		}
+	}
+
+	return constraints
+}
+
 // DraftContract generates a verification contract BEFORE implementation.
 // This is based only on the task intent and expected file changes, not actual implementation.
 // The draft establishes minimum verification requirements that cannot be weakened later.
@@ -281,6 +344,7 @@ func (g *Generator) DraftContract(
 	ctx context.Context,
 	intent string,
 	expectedFiles []string,
+	fileBoundaries []string,
 	projectContext string,
 ) (*VerificationContract, error) {
 	if g.promptRunner == nil {
@@ -310,6 +374,19 @@ func (g *Generator) DraftContract(
 	contract, err := g.parseResponse(response, intent)
 	if err != nil {
 		return g.GenerateMinimal(intent, expectedFiles), nil
+	}
+
+	// Generate must_not_exist constraints from file boundaries
+	mustNotExist := g.generateMustNotExistFromBoundaries(fileBoundaries)
+	// Add to contract's existing constraints (deduplicating)
+	existingMustNotExist := make(map[string]bool)
+	for _, pattern := range contract.FileConstraints.MustNotExist {
+		existingMustNotExist[pattern] = true
+	}
+	for _, pattern := range mustNotExist {
+		if !existingMustNotExist[pattern] {
+			contract.FileConstraints.MustNotExist = append(contract.FileConstraints.MustNotExist, pattern)
+		}
 	}
 
 	// Enhance contract with patterns

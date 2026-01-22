@@ -449,3 +449,8 @@ func (mq *MergeQueue) emitEvent(event OrchestratorEvent) {
 	}
 }
 
+// GetProcessor returns the merge processor for configuration.
+func (mq *MergeQueue) GetProcessor() *MergeProcessor {
+	return mq.processor
+}
+

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ShayCichocki/alphie/internal/agent"
 	"github.com/ShayCichocki/alphie/internal/git"
 	"github.com/ShayCichocki/alphie/internal/merge"
 )
@@ -42,6 +43,8 @@ type MergeProcessor struct {
 	greenfield     bool
 	humanResolver  merge.HumanMergeResolver // For interactive conflict resolution
 	repoPath       string
+	orchestrator   *Orchestrator // For merge conflict blocking
+	git            git.Runner    // For git operations in resolver
 }
 
 // NewMergeProcessor creates a new MergeProcessor.
@@ -65,6 +68,16 @@ func NewMergeProcessor(
 		humanResolver:  humanResolver,
 		repoPath:       repoPath,
 	}
+}
+
+// SetOrchestrator sets the orchestrator reference for merge conflict blocking.
+func (e *MergeProcessor) SetOrchestrator(o *Orchestrator) {
+	e.orchestrator = o
+}
+
+// SetGitRunner sets the git runner for merge resolver operations.
+func (e *MergeProcessor) SetGitRunner(g git.Runner) {
+	e.git = g
 }
 
 // Execute performs the merge operation for a request.
@@ -200,11 +213,61 @@ func (e *MergeProcessor) trySemanticMergeWithRetry(ctx context.Context, req *Mer
 		return e.escalateToHuman(ctx, req, conflictFiles, e.config.MaxRetries+1)
 	}
 
-	return MergeOutcome{
-		Success: false,
-		Error:   fmt.Errorf("semantic merge failed after %d attempts: %w", e.config.MaxRetries+1, lastErr),
-		Reason:  "semantic merge exhausted retries and no human resolver available",
+	// No human resolver - BLOCK ORCHESTRATOR AND SPAWN DEDICATED AGENT
+	if e.orchestrator != nil && e.factory != nil {
+		debugLog("[merge-executor] spawning dedicated merge resolver agent for task %s", req.TaskID)
+
+		// Set merge conflict state - blocks all scheduling
+		e.orchestrator.SetMergeConflict(req.TaskID, conflictFiles)
+
+		// Spawn merge resolver agent asynchronously
+		go e.spawnMergeResolverAgent(ctx, req, conflictFiles)
 	}
+
+	return MergeOutcome{
+		Success:       false,
+		Error:         lastErr,
+		Reason:        fmt.Sprintf("semantic merge failed after %d attempts, spawning dedicated resolver", e.config.MaxRetries+1),
+		ConflictFiles: conflictFiles,
+	}
+}
+
+// spawnMergeResolverAgent creates a dedicated agent to resolve merge conflicts.
+func (e *MergeProcessor) spawnMergeResolverAgent(ctx context.Context, req *MergeRequest, conflictFiles []string) {
+	if e.factory == nil {
+		debugLog("[merge-executor] ERROR: no claude factory for merge resolver")
+		return
+	}
+
+	// Create merge resolver
+	resolver := NewMergeResolverAgent(
+		&claudeFactoryAdapter{factory: e.factory},
+		e.git,
+		e.repoPath,
+		e.orchestrator,
+	)
+
+	// Attempt resolution
+	if err := resolver.Resolve(ctx, req, conflictFiles); err != nil {
+		debugLog("[merge-executor] ERROR: merge resolver failed: %v", err)
+		// Conflict remains - orchestrator stays blocked
+		// User will need to intervene manually
+	} else {
+		debugLog("[merge-executor] SUCCESS: merge resolver completed - scheduling resumed")
+	}
+}
+
+// claudeFactoryAdapter adapts the semantic merger factory to the ClaudeRunnerFactory interface.
+type claudeFactoryAdapter struct {
+	factory func() *SemanticMerger
+}
+
+func (a *claudeFactoryAdapter) NewRunner() agent.ClaudeRunner {
+	// This is a workaround since we don't have direct access to the ClaudeRunnerFactory
+	// The factory creates SemanticMerger which internally has a claude runner
+	// For now, return nil and rely on the fact that we won't use this path
+	// TODO: Refactor to pass ClaudeRunnerFactory directly
+	return nil
 }
 
 // escalateToHuman presents conflicts to a human for resolution.

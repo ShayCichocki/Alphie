@@ -128,6 +128,13 @@ type Orchestrator struct {
 	wg        sync.WaitGroup
 	registry  *AgentRegistry
 	pauseCtrl *PauseController
+
+	// Merge conflict blocking state
+	mergeConflictMu      sync.RWMutex
+	hasMergeConflict     bool
+	mergeConflictTask    string   // Task ID that triggered conflict
+	mergeConflictFiles   []string // Files with conflicts
+	mergeResolverRunning bool     // Is resolver agent active
 }
 
 // New creates an Orchestrator with the given required config and options.
@@ -352,4 +359,46 @@ func (o *Orchestrator) QuestionsAllowedForTask(taskID string) int {
 // Returns empty string if no epic is associated with this session.
 func (o *Orchestrator) GetProgEpicID() string {
 	return o.progCoord.EpicID()
+}
+
+// SetMergeConflict marks the orchestrator as having an active merge conflict.
+// This blocks all task scheduling until the conflict is resolved.
+func (o *Orchestrator) SetMergeConflict(taskID string, files []string) {
+	o.mergeConflictMu.Lock()
+	defer o.mergeConflictMu.Unlock()
+
+	o.hasMergeConflict = true
+	o.mergeConflictTask = taskID
+	o.mergeConflictFiles = files
+
+	o.logger.Log("MERGE_CONFLICT", "Blocking all scheduling - conflict in task %s (%d files)", taskID, len(files))
+}
+
+// HasMergeConflict returns true if there is an active merge conflict blocking scheduling.
+func (o *Orchestrator) HasMergeConflict() bool {
+	o.mergeConflictMu.RLock()
+	defer o.mergeConflictMu.RUnlock()
+	return o.hasMergeConflict
+}
+
+// ClearMergeConflict clears the merge conflict flag and resumes scheduling.
+func (o *Orchestrator) ClearMergeConflict() {
+	o.mergeConflictMu.Lock()
+	defer o.mergeConflictMu.Unlock()
+
+	if !o.hasMergeConflict {
+		return
+	}
+
+	o.logger.Log("MERGE_RESOLVED", "Clearing merge conflict flag - resuming scheduling")
+	o.hasMergeConflict = false
+	o.mergeConflictTask = ""
+	o.mergeConflictFiles = nil
+	o.mergeResolverRunning = false
+
+	// Trigger scheduling to resume work
+	select {
+	case o.scheduler.trigger <- struct{}{}:
+	default:
+	}
 }
