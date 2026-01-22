@@ -15,6 +15,10 @@ func (e *Executor) buildPrompt(task *models.Task, tier models.Tier, opts *Execut
 	sb.WriteString(ScopeGuidancePrompt)
 	sb.WriteString("\n")
 
+	// Inject validation guidance to ensure code quality
+	sb.WriteString(ValidationGuidancePrompt)
+	sb.WriteString("\n")
+
 	sb.WriteString("You are working on a task.\n\n")
 	sb.WriteString("Task ID: ")
 	sb.WriteString(task.ID)
@@ -41,6 +45,41 @@ func (e *Executor) buildPrompt(task *models.Task, tier models.Tier, opts *Execut
 		sb.WriteString("- Create files at project root unless boundaries include it\n")
 		sb.WriteString("- Move or copy files to locations outside boundaries\n\n")
 		sb.WriteString("Violating these constraints will cause verification to fail.\n")
+	}
+
+	// Add directory structure guidance if available
+	if opts != nil && opts.StructureRules != nil {
+		// Type assert to get rules with a method-based interface to avoid import cycles
+		type ruleGetter interface {
+			GetPattern() string
+			GetDescription() string
+			GetExamples() []string
+		}
+		type ruleProvider interface {
+			GetRulesForPath([]string) []ruleGetter
+		}
+
+		if provider, ok := opts.StructureRules.(ruleProvider); ok {
+			relevantRules := provider.GetRulesForPath(task.FileBoundaries)
+			if len(relevantRules) > 0 {
+				sb.WriteString("\n## Project Structure Conventions\n\n")
+				sb.WriteString("This repository follows these directory patterns:\n\n")
+
+				for _, rule := range relevantRules {
+					sb.WriteString(fmt.Sprintf("- **%s**: `%s`\n", rule.GetDescription(), rule.GetPattern()))
+					examples := rule.GetExamples()
+					if len(examples) > 0 {
+						// Show up to 3 examples
+						displayExamples := examples
+						if len(displayExamples) > 3 {
+							displayExamples = displayExamples[:3]
+						}
+						sb.WriteString(fmt.Sprintf("  Examples: %s\n", strings.Join(displayExamples, ", ")))
+					}
+				}
+				sb.WriteString("\n**IMPORTANT**: Follow these patterns when creating new files.\n")
+			}
+		}
 	}
 
 	sb.WriteString("\nTier: ")
