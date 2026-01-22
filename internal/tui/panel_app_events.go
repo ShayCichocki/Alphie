@@ -66,6 +66,7 @@ func (a *PanelApp) handleTaskEntered(msg OrchestratorEventMsg) {
 		task.Title = msg.TaskTitle
 		task.Status = models.TaskStatusPending
 		a.tasksPanel.SetTasks(a.tasks)
+		a.updateFooterCounts()
 	}
 }
 
@@ -83,6 +84,7 @@ func (a *PanelApp) handleEpicCreated(msg OrchestratorEventMsg) {
 		task.Title = msg.TaskTitle
 		task.Status = models.TaskStatusInProgress
 		a.tasksPanel.SetTasks(a.tasks)
+		a.updateFooterCounts()
 	}
 }
 
@@ -96,6 +98,7 @@ func (a *PanelApp) handleTaskQueued(msg OrchestratorEventMsg) {
 			task.ParentID = msg.ParentID
 		}
 		a.tasksPanel.SetTasks(a.tasks)
+		a.updateFooterCounts()
 	}
 }
 

@@ -253,8 +253,9 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	// Set package-level logger for internal components
 	setPackageLogger(logger)
 
-	// Create event emitter (needed by spawner and prog coordinator)
-	emitter := NewEventEmitter(100)
+	// Create event emitter with large buffer to prevent event loss
+	// Buffer size of 1000 supports ~10 concurrent tasks with ~100 events each
+	emitter := NewEventEmitter(1000)
 
 	// Create prog coordinator for cross-session task tracking
 	progCoord := NewProgCoordinator(cfg.ProgClient, emitter, cfg.OriginalTaskID, cfg.Tier, cfg.ResumeEpicID)

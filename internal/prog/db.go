@@ -174,10 +174,37 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	// Configure connection pool for SQLite
+	// SQLite performs best with single writer to avoid SQLITE_BUSY errors
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0) // Reuse connections indefinitely
+
 	// Enable foreign keys
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+
+	// Set busy timeout to prevent immediate SQLITE_BUSY errors
+	// Wait up to 5 seconds for locks to clear
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
+	}
+
+	// Enable WAL mode for better concurrency
+	// WAL allows readers and writers to work simultaneously
+	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
+	}
+
+	// Set synchronous to NORMAL for better performance
+	// Still safe with WAL mode
+	if _, err := db.Exec("PRAGMA synchronous = NORMAL"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to set synchronous mode: %w", err)
 	}
 
 	return &DB{db}, nil

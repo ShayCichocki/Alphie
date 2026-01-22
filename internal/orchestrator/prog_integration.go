@@ -13,6 +13,55 @@ import (
 	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
+// progOperationConfig holds retry configuration for prog operations.
+var progOperationConfig = struct {
+	MaxRetries    int
+	InitialDelay  time.Duration
+	MaxDelay      time.Duration
+	BackoffFactor float64
+}{
+	MaxRetries:    3,
+	InitialDelay:  100 * time.Millisecond,
+	MaxDelay:      2 * time.Second,
+	BackoffFactor: 2.0,
+}
+
+// retryProgOperation executes a prog operation with exponential backoff retry.
+// Operations run asynchronously to avoid blocking on database locks.
+func retryProgOperation(opName string, op func() error) {
+	go func() {
+		delay := progOperationConfig.InitialDelay
+		var lastErr error
+
+		for attempt := 0; attempt <= progOperationConfig.MaxRetries; attempt++ {
+			if attempt > 0 {
+				time.Sleep(delay)
+				delay = time.Duration(float64(delay) * progOperationConfig.BackoffFactor)
+				if delay > progOperationConfig.MaxDelay {
+					delay = progOperationConfig.MaxDelay
+				}
+			}
+
+			if err := op(); err != nil {
+				lastErr = err
+				log.Printf("[orchestrator] %s attempt %d/%d failed: %v",
+					opName, attempt+1, progOperationConfig.MaxRetries+1, err)
+				continue
+			}
+
+			// Success
+			if attempt > 0 {
+				log.Printf("[orchestrator] %s succeeded after %d retries", opName, attempt)
+			}
+			return
+		}
+
+		// All retries exhausted
+		log.Printf("[orchestrator] ERROR: %s failed after %d attempts, last error: %v",
+			opName, progOperationConfig.MaxRetries+1, lastErr)
+	}()
+}
+
 // ProgCoordinator manages cross-session task tracking via the prog system.
 // It handles epic and task creation, status synchronization, and resumption.
 type ProgCoordinator struct {
@@ -163,13 +212,13 @@ func (p *ProgCoordinator) StartTask(internalID string) {
 		return
 	}
 
-	if err := p.client.Start(progID); err != nil {
-		log.Printf("[orchestrator] warning: failed to start prog task %s: %v", progID, err)
-		return
-	}
-	if err := p.client.AddLog(progID, "Task execution started"); err != nil {
-		log.Printf("[orchestrator] warning: failed to log prog task start %s: %v", progID, err)
-	}
+	// Start task with retry logic
+	retryProgOperation(fmt.Sprintf("start task %s", progID), func() error {
+		if err := p.client.Start(progID); err != nil {
+			return err
+		}
+		return p.client.AddLog(progID, "Task execution started")
+	})
 }
 
 // LogTask adds a log entry to a prog task.
@@ -182,9 +231,10 @@ func (p *ProgCoordinator) LogTask(internalID, message string) {
 		return
 	}
 
-	if err := p.client.AddLog(progID, message); err != nil {
-		log.Printf("[orchestrator] warning: failed to log prog task %s: %v", progID, err)
-	}
+	// Log with retry logic
+	retryProgOperation(fmt.Sprintf("log task %s", progID), func() error {
+		return p.client.AddLog(progID, message)
+	})
 }
 
 // CompleteTask marks a prog task as done and logs the completion.
@@ -197,12 +247,13 @@ func (p *ProgCoordinator) CompleteTask(internalID string) {
 		return
 	}
 
-	if err := p.client.AddLog(progID, "Task completed successfully"); err != nil {
-		log.Printf("[orchestrator] warning: failed to log prog task completion %s: %v", progID, err)
-	}
-	if err := p.client.Done(progID); err != nil {
-		log.Printf("[orchestrator] warning: failed to complete prog task %s: %v", progID, err)
-	}
+	// Complete with retry logic
+	retryProgOperation(fmt.Sprintf("complete task %s", progID), func() error {
+		if err := p.client.AddLog(progID, "Task completed successfully"); err != nil {
+			return err
+		}
+		return p.client.Done(progID)
+	})
 }
 
 // BlockTask marks a prog task as blocked and logs the failure reason.
@@ -215,12 +266,13 @@ func (p *ProgCoordinator) BlockTask(internalID, reason string) {
 		return
 	}
 
-	if err := p.client.AddLog(progID, fmt.Sprintf("Task failed: %s", reason)); err != nil {
-		log.Printf("[orchestrator] warning: failed to log prog task failure %s: %v", progID, err)
-	}
-	if err := p.client.Block(progID); err != nil {
-		log.Printf("[orchestrator] warning: failed to block prog task %s: %v", progID, err)
-	}
+	// Block with retry logic
+	retryProgOperation(fmt.Sprintf("block task %s", progID), func() error {
+		if err := p.client.AddLog(progID, fmt.Sprintf("Task failed: %s", reason)); err != nil {
+			return err
+		}
+		return p.client.Block(progID)
+	})
 }
 
 // LoadTasksFromEpic loads tasks from an existing prog epic for resumption.

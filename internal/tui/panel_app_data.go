@@ -45,6 +45,7 @@ func (a *PanelApp) findOrCreateAgent(id string) *models.Agent {
 		StartedAt: time.Now(),
 	}
 	a.agents = append(a.agents, agent)
+	a.agentsPanel.SetAgents(a.agents)
 	return agent
 }
 
@@ -60,6 +61,7 @@ func (a *PanelApp) findOrCreateTask(id string) *models.Task {
 		Status: models.TaskStatusPending,
 	}
 	a.tasks = append(a.tasks, task)
+	a.tasksPanel.SetTasks(a.tasks)
 	return task
 }
 
@@ -134,4 +136,5 @@ func (a *PanelApp) removeTaskByID(id string) {
 		}
 	}
 	a.tasks = filtered
+	a.tasksPanel.SetTasks(a.tasks)
 }

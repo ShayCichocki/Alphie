@@ -356,11 +356,14 @@ func (mq *MergeQueue) processMerge(req *MergeRequest) MergeOutcome {
 
 	// Processor failed, try fallback strategy
 	if len(outcome.ConflictFiles) > 0 {
+		conflictSummary := fmt.Sprintf("Attempting fallback merge strategy for %d conflict file(s)", len(outcome.ConflictFiles))
+		log.Printf("[merge_queue] %s for task %s: %v", conflictSummary, req.TaskID, outcome.ConflictFiles)
+
 		mq.emitEvent(OrchestratorEvent{
 			Type:      EventMergeStarted,
 			TaskID:    req.TaskID,
 			AgentID:   req.AgentID,
-			Message:   "Attempting fallback merge strategy",
+			Message:   conflictSummary,
 			Timestamp: time.Now(),
 		})
 
@@ -374,11 +377,14 @@ func (mq *MergeQueue) processMerge(req *MergeRequest) MergeOutcome {
 			}
 
 			_ = mq.merger.DeleteBranch(req.AgentBranch)
+			successMsg := fmt.Sprintf("Fallback merge completed: %s", fallbackOutcome.Reason)
+			log.Printf("[merge_queue] %s for task %s", successMsg, req.TaskID)
+
 			mq.emitEvent(OrchestratorEvent{
 				Type:      EventMergeCompleted,
 				TaskID:    req.TaskID,
 				AgentID:   req.AgentID,
-				Message:   fmt.Sprintf("Fallback merge completed: %s", fallbackOutcome.Reason),
+				Message:   successMsg,
 				Timestamp: time.Now(),
 			})
 		} else {
@@ -389,11 +395,16 @@ func (mq *MergeQueue) processMerge(req *MergeRequest) MergeOutcome {
 				}
 			}
 
+			// Build detailed error message with conflict files
+			errorMsg := fmt.Sprintf("Merge failed after fallback attempt: %s. Conflict files: %v",
+				fallbackOutcome.Reason, outcome.ConflictFiles)
+			log.Printf("[merge_queue] ERROR: %s for task %s (error: %v)", errorMsg, req.TaskID, fallbackOutcome.Error)
+
 			mq.emitEvent(OrchestratorEvent{
 				Type:      EventMergeCompleted,
 				TaskID:    req.TaskID,
 				AgentID:   req.AgentID,
-				Message:   fmt.Sprintf("Merge failed: %s", fallbackOutcome.Reason),
+				Message:   errorMsg,
 				Error:     fallbackOutcome.Error,
 				Timestamp: time.Now(),
 			})
@@ -408,11 +419,18 @@ func (mq *MergeQueue) processMerge(req *MergeRequest) MergeOutcome {
 		}
 	}
 
+	// Build detailed error message
+	errorMsg := fmt.Sprintf("Merge failed: %s", outcome.Reason)
+	if outcome.Error != nil {
+		errorMsg = fmt.Sprintf("%s (error: %v)", errorMsg, outcome.Error)
+	}
+	log.Printf("[merge_queue] ERROR: %s for task %s", errorMsg, req.TaskID)
+
 	mq.emitEvent(OrchestratorEvent{
 		Type:      EventMergeCompleted,
 		TaskID:    req.TaskID,
 		AgentID:   req.AgentID,
-		Message:   fmt.Sprintf("Merge failed: %s", outcome.Reason),
+		Message:   errorMsg,
 		Error:     outcome.Error,
 		Timestamp: time.Now(),
 	})
