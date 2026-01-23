@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ShayCichocki/alphie/pkg/models"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestNewInteractiveApp(t *testing.T) {
@@ -26,9 +26,9 @@ func TestInteractiveApp_SetTaskSubmitHandler(t *testing.T) {
 	app := NewInteractiveApp()
 
 	var receivedTask string
-	var receivedTier models.Tier
+	var receivedTier interface{}
 
-	handler := func(task string, tier models.Tier) {
+	handler := func(task string, tier interface{}) {
 		receivedTask = task
 		receivedTier = tier
 	}
@@ -40,13 +40,13 @@ func TestInteractiveApp_SetTaskSubmitHandler(t *testing.T) {
 	}
 
 	// Trigger the handler
-	app.onTaskSubmit("test task", models.TierBuilder)
+	app.onTaskSubmit("test task", nil)
 
 	if receivedTask != "test task" {
 		t.Errorf("Handler received task = %q, want %q", receivedTask, "test task")
 	}
-	if receivedTier != models.TierBuilder {
-		t.Errorf("Handler received tier = %q, want %q", receivedTier, models.TierBuilder)
+	if receivedTier != nil {
+		t.Errorf("Handler received tier = %q, want %q", receivedTier, nil)
 	}
 }
 
@@ -97,11 +97,11 @@ func TestInteractiveApp_Update_TaskSubmitted(t *testing.T) {
 	app := NewInteractiveApp()
 
 	var handlerCalled bool
-	app.SetTaskSubmitHandler(func(task string, tier models.Tier) {
+	app.SetTaskSubmitHandler(func(task string, tier interface{}) {
 		handlerCalled = true
 	})
 
-	msg := TaskSubmittedMsg{Task: "test task", Tier: models.TierBuilder}
+	msg := TaskSubmittedMsg{Task: "test task", Tier: nil}
 	_, _ = app.Update(msg)
 
 	if !handlerCalled {
@@ -113,7 +113,7 @@ func TestInteractiveApp_Update_TaskSubmitted_NoHandler(t *testing.T) {
 	app := NewInteractiveApp()
 	// Don't set a handler
 
-	msg := TaskSubmittedMsg{Task: "test task", Tier: models.TierBuilder}
+	msg := TaskSubmittedMsg{Task: "test task", Tier: nil}
 
 	// Should not panic
 	_, _ = app.Update(msg)

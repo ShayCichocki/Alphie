@@ -19,7 +19,7 @@ type RalphLoop struct {
 	gates                *QualityGates
 	baseline             *Baseline
 	testSelector         *FocusedTestSelector
-	tier                 models.Tier
+	tierIgnored interface{}
 	workDir              string
 	verificationContract *verification.VerificationContract
 	contractRunner       *verification.ContractRunner
@@ -49,15 +49,15 @@ type RalphLoopResult struct {
 }
 
 // NewRalphLoop creates a new RalphLoop for the given tier and work directory.
-func NewRalphLoop(tier models.Tier, workDir string) *RalphLoop {
-	threshold := ThresholdForTier(tier)
+func NewRalphLoop(tierIgnored interface{}, workDir string) *RalphLoop {
+	threshold := ThresholdForTier(tierIgnored)
 
 	return &RalphLoop{
 		critique:     NewCritiquePrompt(threshold),
-		controller:   NewIterationController(tier),
+		controller:   NewIterationController(tierIgnored),
 		gates:        NewQualityGates(workDir),
 		testSelector: NewFocusedTestSelector(workDir),
-		tier:         tier,
+		tierIgnored:  tierIgnored,
 		workDir:      workDir,
 	}
 }

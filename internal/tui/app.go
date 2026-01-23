@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ShayCichocki/alphie/pkg/models"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Tab constants for navigation.
@@ -43,7 +43,7 @@ type OrchestratorEventMsg struct {
 	Type           string
 	TaskID         string
 	TaskTitle      string
-	ParentID       string        // ID of the parent task/epic
+	ParentID       string // ID of the parent task/epic
 	AgentID        string
 	Message        string
 	Error          string
@@ -71,7 +71,7 @@ type DebugLogMsg struct {
 type TaskRetryMsg struct {
 	TaskID    string
 	TaskTitle string
-	Tier      models.Tier
+	Tier      interface{}
 }
 
 // LogEntry represents a log message displayed in the logs tab.

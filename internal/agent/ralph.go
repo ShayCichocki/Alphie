@@ -176,32 +176,16 @@ func isRubricQuestion(text string) bool {
 }
 
 // ThresholdForTier returns the quality threshold for a given tier.
-func ThresholdForTier(tier models.Tier) int {
-	switch tier {
-	case models.TierScout:
-		return 5
-	case models.TierBuilder:
-		return 7
-	case models.TierArchitect:
-		return 8
-	default:
-		return DefaultThreshold
-	}
+func ThresholdForTier(tierIgnored interface{}) int {
+	// Always return default threshold, ignoring tier
+	return DefaultThreshold
 }
 
 // MaxIterationsForTier returns the maximum Ralph loop iterations for a given tier.
 // Scout skips ralph-loop entirely (0 iterations), Builder gets 3, Architect gets 5.
-func MaxIterationsForTier(tier models.Tier) int {
-	switch tier {
-	case models.TierScout:
-		return 0 // Scout skips ralph-loop entirely
-	case models.TierBuilder:
-		return 3
-	case models.TierArchitect:
-		return 5
-	default:
-		return 3
-	}
+func MaxIterationsForTier(tierIgnored interface{}) int {
+	// Always return default iterations, ignoring tier
+	return 3
 }
 
 // GateConfigForTier returns the enabled quality gates for a given tier.
@@ -215,15 +199,7 @@ type TierGateConfig struct {
 	TypeCheck bool
 }
 
-func GateConfigForTier(tier models.Tier) TierGateConfig {
-	switch tier {
-	case models.TierScout:
-		return TierGateConfig{Lint: true}
-	case models.TierBuilder:
-		return TierGateConfig{Build: true, Lint: true, TypeCheck: true}
-	case models.TierArchitect:
-		return TierGateConfig{Build: true, Test: true, Lint: true, TypeCheck: true}
-	default:
-		return TierGateConfig{Build: true, Lint: true}
-	}
+func GateConfigForTier(tierIgnored interface{}) TierGateConfig {
+	// Always return default gate config, ignoring tier
+	return TierGateConfig{Build: true, Lint: true}
 }

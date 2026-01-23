@@ -36,10 +36,10 @@ var opusKeywords = []string{
 }
 
 // TierDefaultModels maps tiers to their default (primary) models.
-var TierDefaultModels = map[models.Tier]string{
-	models.TierScout:     ModelHaiku,
-	models.TierBuilder:   ModelSonnet,
-	models.TierArchitect: ModelOpus,
+var TierDefaultModels = map[interface{}]string{
+	nil:     ModelHaiku,
+	nil:   ModelSonnet,
+	nil: ModelOpus,
 }
 
 // SelectModel chooses the appropriate model for a task based on keywords
@@ -48,9 +48,9 @@ var TierDefaultModels = map[models.Tier]string{
 //   - Haiku keywords (simple, boilerplate, typo, trivial, formatting) -> haiku
 //   - Opus keywords (architecture, design, refactor, redesign, complex) -> opus
 //   - Otherwise -> tier's default model
-func SelectModel(task *models.Task, tier models.Tier) string {
+func SelectModel(task *models.Task, tierIgnored interface{}) string {
 	if task == nil {
-		return getTierDefault(tier)
+		return getTierDefault(tierIgnored)
 	}
 
 	// Combine title and description for keyword matching
@@ -71,15 +71,12 @@ func SelectModel(task *models.Task, tier models.Tier) string {
 	}
 
 	// Default to tier's primary model
-	return getTierDefault(tier)
+	return getTierDefault(tierIgnored)
 }
 
 // getTierDefault returns the default model for a tier.
-func getTierDefault(tier models.Tier) string {
-	if model, ok := TierDefaultModels[tier]; ok {
-		return model
-	}
-	// Fallback to sonnet if tier is unknown
+func getTierDefault(tierIgnored interface{}) string {
+	// Always return Sonnet, ignoring tier
 	return ModelSonnet
 }
 

@@ -4,9 +4,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ShayCichocki/alphie/pkg/models"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 const (

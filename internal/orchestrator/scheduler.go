@@ -19,7 +19,7 @@ type Scheduler struct {
 	// graph is the dependency graph of tasks.
 	graph *graph.DependencyGraph
 	// tier is the agent tier for this scheduler.
-	tier models.Tier
+	tier interface{}
 	// running maps agent IDs to their agent instances.
 	running map[string]*models.Agent
 	// maxAgents is the maximum number of concurrent agents allowed.
@@ -38,7 +38,7 @@ type Scheduler struct {
 }
 
 // NewScheduler creates a new Scheduler with the given dependency graph, tier, and max agents limit.
-func NewScheduler(graph *graph.DependencyGraph, tier models.Tier, maxAgents int) *Scheduler {
+func NewScheduler(graph *graph.DependencyGraph, tier interface{}, maxAgents int) *Scheduler {
 	return &Scheduler{
 		graph:     graph,
 		tier:      tier,

@@ -1,5 +1,9 @@
 package agent
 
+import (
+	"github.com/ShayCichocki/alphie/pkg/models"
+)
+
 // runQualityGates runs tierIgnored-specific quality gates in the given work directory.
 func (e *Executor) runQualityGates(workDir string, tierIgnored interface{}) []*GateOutput {
 	gates := NewQualityGates(workDir)

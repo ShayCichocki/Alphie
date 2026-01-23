@@ -3,17 +3,12 @@ package orchestrator
 
 import (
 	"github.com/ShayCichocki/alphie/internal/agent"
-	"github.com/ShayCichocki/alphie/internal/config"
 	"github.com/ShayCichocki/alphie/internal/decompose"
 	iexec "github.com/ShayCichocki/alphie/internal/exec"
 	"github.com/ShayCichocki/alphie/internal/git"
 	"github.com/ShayCichocki/alphie/internal/graph"
-	"github.com/ShayCichocki/alphie/internal/learning"
 	"github.com/ShayCichocki/alphie/internal/orchestrator/policy"
-	"github.com/ShayCichocki/alphie/internal/prog"
 	"github.com/ShayCichocki/alphie/internal/protect"
-	"github.com/ShayCichocki/alphie/internal/state"
-	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // RequiredConfig contains the minimal required configuration for an Orchestrator.
@@ -21,8 +16,6 @@ import (
 type RequiredConfig struct {
 	// RepoPath is the path to the git repository.
 	RepoPath string
-	// Tier is the agent tier for task execution.
-	Tier models.Tier
 	// Executor is the agent executor for running tasks.
 	Executor agent.TaskExecutor
 }
@@ -34,20 +27,15 @@ type Option func(*orchestratorOptions)
 // These mirror OrchestratorConfig but are only used during construction.
 type orchestratorOptions struct {
 	maxAgents            int
-	tierConfigs          *config.TierConfigs
 	policyConfig         *policy.Config
 	greenfield           bool
 	decomposerClaude     agent.ClaudeRunner
 	mergerClaude         agent.ClaudeRunner
 	secondReviewerClaude agent.ClaudeRunner
 	runnerFactory        agent.ClaudeRunnerFactory
-	stateDB              state.StateStore
-	learningSystem       learning.LearningProvider
-	progClient           prog.ProgTracker
 	logger               *DebugLogger
 	gitRunner            git.Runner
 	execRunner           iexec.CommandRunner
-	resumeEpicID         string
 	originalTaskID       string
 
 	// Injectable dependencies for testing
@@ -62,11 +50,6 @@ type orchestratorOptions struct {
 // WithMaxAgents sets the maximum number of concurrent agents.
 func WithMaxAgents(n int) Option {
 	return func(o *orchestratorOptions) { o.maxAgents = n }
-}
-
-// WithTierConfigs sets the tier configurations.
-func WithTierConfigs(tc *config.TierConfigs) Option {
-	return func(o *orchestratorOptions) { o.tierConfigs = tc }
 }
 
 // WithPolicy sets the policy configuration.
@@ -99,21 +82,6 @@ func WithRunnerFactory(f agent.ClaudeRunnerFactory) Option {
 	return func(o *orchestratorOptions) { o.runnerFactory = f }
 }
 
-// WithStateDB sets the state database.
-func WithStateDB(db state.StateStore) Option {
-	return func(o *orchestratorOptions) { o.stateDB = db }
-}
-
-// WithLearningSystem sets the learning system.
-func WithLearningSystem(ls learning.LearningProvider) Option {
-	return func(o *orchestratorOptions) { o.learningSystem = ls }
-}
-
-// WithProgClient sets the prog client for cross-session task management.
-func WithProgClient(pc prog.ProgTracker) Option {
-	return func(o *orchestratorOptions) { o.progClient = pc }
-}
-
 // WithLogger sets the debug logger.
 func WithLogger(l *DebugLogger) Option {
 	return func(o *orchestratorOptions) { o.logger = l }
@@ -127,11 +95,6 @@ func WithGitRunner(r git.Runner) Option {
 // WithExecRunner sets the command execution runner.
 func WithExecRunner(r iexec.CommandRunner) Option {
 	return func(o *orchestratorOptions) { o.execRunner = r }
-}
-
-// WithResumeEpicID sets the epic ID to resume.
-func WithResumeEpicID(id string) Option {
-	return func(o *orchestratorOptions) { o.resumeEpicID = id }
 }
 
 // WithOriginalTaskID sets the original task ID for event linking.
@@ -174,23 +137,17 @@ func WithMergeStrategy(s *MergeStrategy) Option {
 func toOrchestratorConfig(req RequiredConfig, opts *orchestratorOptions) OrchestratorConfig {
 	return OrchestratorConfig{
 		RepoPath:             req.RepoPath,
-		Tier:                 req.Tier,
 		Executor:             req.Executor,
 		MaxAgents:            opts.maxAgents,
-		TierConfigs:          opts.tierConfigs,
 		Policy:               opts.policyConfig,
 		Greenfield:           opts.greenfield,
 		DecomposerClaude:     opts.decomposerClaude,
 		MergerClaude:         opts.mergerClaude,
 		SecondReviewerClaude: opts.secondReviewerClaude,
 		ClaudeRunnerFactory:  opts.runnerFactory,
-		StateDB:              opts.stateDB,
-		LearningSystem:       opts.learningSystem,
-		ProgClient:           opts.progClient,
 		Logger:               opts.logger,
 		GitRunner:            opts.gitRunner,
 		ExecRunner:           opts.execRunner,
-		ResumeEpicID:         opts.resumeEpicID,
 		OriginalTaskID:       opts.originalTaskID,
 		Decomposer:           opts.decomposer,
 		Graph:                opts.graph,

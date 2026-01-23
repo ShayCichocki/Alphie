@@ -3,8 +3,6 @@ package orchestrator
 
 import (
 	"strings"
-
-	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // TierKeywords is the single source of truth for tier classification keywords.
@@ -83,7 +81,7 @@ var DefaultTierKeywords = TierKeywords{
 // TierSelection represents a tier selection with confidence information.
 type TierSelection struct {
 	// Tier is the selected tier.
-	Tier models.Tier
+	Tier interface{}
 	// Confidence is how confident the selection is (0.0-1.0).
 	// Low confidence suggests the task might be misclassified.
 	Confidence float64
@@ -102,7 +100,7 @@ func ClassifyWithConfidence(taskText string) TierSelection {
 	for _, kw := range DefaultTierKeywords.Architect {
 		if strings.Contains(lower, strings.ToLower(kw)) {
 			return TierSelection{
-				Tier:           models.TierArchitect,
+				Tier:           nil,
 				Confidence:     0.85,
 				Reason:         "matched architect keyword",
 				MatchedKeyword: kw,
@@ -114,7 +112,7 @@ func ClassifyWithConfidence(taskText string) TierSelection {
 	for _, kw := range DefaultTierKeywords.Quick {
 		if strings.Contains(lower, strings.ToLower(kw)) {
 			return TierSelection{
-				Tier:           models.TierQuick,
+				Tier:           nil,
 				Confidence:     0.80,
 				Reason:         "matched quick keyword",
 				MatchedKeyword: kw,
@@ -126,7 +124,7 @@ func ClassifyWithConfidence(taskText string) TierSelection {
 	for _, kw := range DefaultTierKeywords.Scout {
 		if strings.Contains(lower, strings.ToLower(kw)) {
 			return TierSelection{
-				Tier:           models.TierScout,
+				Tier:           nil,
 				Confidence:     0.75,
 				Reason:         "matched scout keyword",
 				MatchedKeyword: kw,
@@ -136,7 +134,7 @@ func ClassifyWithConfidence(taskText string) TierSelection {
 
 	// Default to Builder with lower confidence
 	return TierSelection{
-		Tier:       models.TierBuilder,
+		Tier:       nil,
 		Confidence: 0.60,
 		Reason:     "no keyword match, defaulting to builder",
 	}
@@ -144,7 +142,7 @@ func ClassifyWithConfidence(taskText string) TierSelection {
 
 // ClassifyTier returns just the tier for a task description.
 // This is a convenience wrapper around ClassifyWithConfidence.
-func ClassifyTier(taskText string) models.Tier {
+func ClassifyTier(taskText string) interface{} {
 	return ClassifyWithConfidence(taskText).Tier
 }
 

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ShayCichocki/alphie/internal/agent"
-	"github.com/ShayCichocki/alphie/internal/learning"
 	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
@@ -150,23 +149,13 @@ func (o *Orchestrator) spawnAgents(ctx context.Context, ready []*models.Task, in
 		if isProtected {
 			// For Scout tier, mark in override gate to allow questions
 			// For other tiers, they can already ask questions, so proceed
-			if o.config.Tier == models.TierScout {
+			if o.config.Tier == nil {
 				o.overrideGate.SetProtectedArea(task.ID, true)
 				log.Printf("[orchestrator] task %s touches protected area, Scout can now ask questions", task.ID)
 			}
 		}
 
-		// Retrieve relevant learnings for this task
-		var taskLearnings []*learning.Learning
-		if o.learnings != nil {
-			learnings, err := o.learnings.OnTaskStart(task.Description, nil)
-			if err != nil {
-				log.Printf("[orchestrator] warning: failed to retrieve learnings for task %s: %v", task.ID, err)
-			} else if len(learnings) > 0 {
-				taskLearnings = learnings
-				log.Printf("[orchestrator] retrieved %d learnings for task %s", len(learnings), task.ID)
-			}
-		}
+		// Learning system removed - no learnings to retrieve
 
 		// Create agent context
 		taskCtx, taskCancel := context.WithCancel(ctx)
@@ -179,23 +168,22 @@ func (o *Orchestrator) spawnAgents(ctx context.Context, ready []*models.Task, in
 
 		agentID, resultCh := o.spawner.Spawn(taskCtx, task, SpawnOptions{
 			Tier:           o.config.Tier,
-			Learnings:      taskLearnings,
 			Baseline:       o.config.Baseline,
 			WorkersRunning: workersRunning + i + 1,
 			WorkersBlocked: 0,
 			StructureRules: structureRules,
 		})
 
+		// TODO: state persistence removed - reinstate if needed
 		// Create agent model for state persistence
-		agentModel := &models.Agent{
-			ID:        agentID,
-			TaskID:    task.ID,
-			Status:    models.AgentStatusRunning,
-			StartedAt: time.Now(),
-		}
-
+		// agentModel := &models.Agent{
+		// 	ID:        agentID,
+		// 	TaskID:    task.ID,
+		// 	Status:    models.AgentStatusRunning,
+		// 	StartedAt: time.Now(),
+		// }
 		// Persist agent state
-		o.createAgentState(agentModel)
+		// o.createAgentState(agentModel)
 
 		// Track in-flight task
 		inf := &inflight{
@@ -213,10 +201,12 @@ func (o *Orchestrator) spawnAgents(ctx context.Context, ready []*models.Task, in
 		// Update task status and assign to agent
 		task.Status = models.TaskStatusInProgress
 		task.AssignedTo = agentID
-		o.updateTaskState(task)
+		// TODO: state persistence removed - reinstate if needed
+		// o.updateTaskState(task)
 
+		// TODO: prog task tracking removed - reinstate if needed
 		// Update prog task status to in_progress
-		o.progCoord.StartTask(task.ID)
+		// o.progCoord.StartTask(task.ID)
 
 		// Wait for result in background and signal completion
 		o.wg.Add(1)

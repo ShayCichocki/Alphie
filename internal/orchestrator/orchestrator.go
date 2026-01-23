@@ -8,33 +8,23 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ShayCichocki/alphie/internal/agent"
-	"github.com/ShayCichocki/alphie/internal/config"
 	"github.com/ShayCichocki/alphie/internal/decompose"
 	iexec "github.com/ShayCichocki/alphie/internal/exec"
 	"github.com/ShayCichocki/alphie/internal/git"
 	"github.com/ShayCichocki/alphie/internal/graph"
-	"github.com/ShayCichocki/alphie/internal/learning"
 	"github.com/ShayCichocki/alphie/internal/merge"
 	"github.com/ShayCichocki/alphie/internal/orchestrator/policy"
-	"github.com/ShayCichocki/alphie/internal/prog"
 	"github.com/ShayCichocki/alphie/internal/protect"
-	"github.com/ShayCichocki/alphie/internal/state"
 	"github.com/ShayCichocki/alphie/internal/structure"
-	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // OrchestratorConfig contains configuration options for the Orchestrator.
 type OrchestratorConfig struct {
 	// RepoPath is the path to the git repository.
 	RepoPath string
-	// Tier is the agent tier for task execution.
-	Tier models.Tier
 	// MaxAgents is the maximum number of concurrent agents.
-	// If 0, the value is taken from TierConfigs (or defaults to 4).
+	// If 0, defaults to 4.
 	MaxAgents int
-	// TierConfigs holds loaded tier configurations from YAML.
-	// If nil, hardcoded defaults are used.
-	TierConfigs *config.TierConfigs
 	// Policy contains configurable policy parameters.
 	// If nil, policy.Default() is used.
 	Policy *policy.Config
@@ -52,14 +42,6 @@ type OrchestratorConfig struct {
 	ClaudeRunnerFactory agent.ClaudeRunnerFactory
 	// Executor is the agent executor for running tasks.
 	Executor agent.TaskExecutor
-	// StateDB is the database for persisting session/agent/task state.
-	StateDB state.StateStore
-	// LearningSystem provides learning retrieval and recording capabilities.
-	// If nil, learning features are disabled.
-	LearningSystem learning.LearningProvider
-	// ProgClient provides cross-session task management capabilities.
-	// If nil, prog features are disabled.
-	ProgClient prog.ProgTracker
 	// Logger provides debug logging for orchestrator operations.
 	// If nil, a default logger is created writing to .alphie/logs/orchestrator-debug.log
 	Logger *DebugLogger
@@ -69,10 +51,6 @@ type OrchestratorConfig struct {
 	// ExecRunner provides command execution. If nil, exec.NewRunner() is used.
 	// Inject a custom implementation for testing.
 	ExecRunner iexec.CommandRunner
-	// ResumeEpicID is an existing prog epic ID to resume.
-	// If set, the orchestrator will load tasks from this epic instead of decomposing.
-	// Completed tasks will be skipped, and in-progress/open tasks will be executed.
-	ResumeEpicID string
 	// OriginalTaskID is the task ID from the TUI's task_entered event.
 	// Used to link epic_created events back to the original task for deduplication.
 	OriginalTaskID string
@@ -128,17 +106,12 @@ type Orchestrator struct {
 	mergeVerifier  *MergeVerifier
 
 	// Support components
-	collision          *CollisionChecker
-	protected          *protect.Detector
-	overrideGate       *ScoutOverrideGate
-	learnings          learning.LearningProvider
-	progCoord          *ProgCoordinator
-	learningCoord      *LearningCoordinator
-	effectivenessTracker *learning.EffectivenessTracker
-	structureAnalyzer  *structure.StructureAnalyzer
+	collision         *CollisionChecker
+	protected         *protect.Detector
+	overrideGate      *ScoutOverrideGate
+	structureAnalyzer *structure.StructureAnalyzer
 
 	// External dependencies
-	stateDB       state.StateStore
 	runnerFactory agent.ClaudeRunnerFactory
 	logger        *DebugLogger
 
@@ -165,7 +138,7 @@ type Orchestrator struct {
 //	orch := orchestrator.New(
 //	    orchestrator.RequiredConfig{
 //	        RepoPath: "/path/to/repo",
-//	        Tier:     models.TierBuilder,
+//	        Tier:     nil,
 //	        Executor: executor,
 //	    },
 //	    orchestrator.WithGreenfield(true),
@@ -221,14 +194,15 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	overrideGate := cfg.OverrideGate
 	if overrideGate == nil {
 		overridePolicy := &policy.Default().Override
-		if cfg.TierConfigs != nil && cfg.TierConfigs.Scout != nil && cfg.TierConfigs.Scout.OverrideGates != nil {
-			og := cfg.TierConfigs.Scout.OverrideGates
-			overridePolicy = &policy.OverridePolicy{
-				BlockedAfterNAttempts: og.BlockedAfterNAttempts,
-				ProtectedAreaDetected: og.ProtectedAreaDetected,
-			}
-		}
-		overrideGate = NewScoutOverrideGateWithPolicy(protected, overridePolicy, cfg.TierConfigs)
+		// TODO: TierConfigs removed - reinstate if needed
+		// if cfg.TierConfigs != nil && cfg.TierConfigs.Scout != nil && cfg.TierConfigs.Scout.OverrideGates != nil {
+		// 	og := cfg.TierConfigs.Scout.OverrideGates
+		// 	overridePolicy = &policy.OverridePolicy{
+		// 		BlockedAfterNAttempts: og.BlockedAfterNAttempts,
+		// 		ProtectedAreaDetected: og.ProtectedAreaDetected,
+		// 	}
+		// }
+		overrideGate = NewScoutOverrideGateWithPolicy(protected, overridePolicy, nil)
 	}
 
 	// Create git runner - use provided or create default
@@ -260,14 +234,15 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 		})
 	}
 
-	// Determine maxAgents from config or TierConfigs
+	// Determine maxAgents from config
 	maxAgents := cfg.MaxAgents
-	if maxAgents <= 0 && cfg.TierConfigs != nil {
-		tierCfg := cfg.TierConfigs.Get(cfg.Tier)
-		if tierCfg != nil && tierCfg.MaxAgents > 0 {
-			maxAgents = tierCfg.MaxAgents
-		}
-	}
+	// TODO: TierConfigs removed - reinstate if needed
+	// if maxAgents <= 0 && cfg.TierConfigs != nil {
+	// 	tierCfg := cfg.TierConfigs.Get(cfg.Tier)
+	// 	if tierCfg != nil && tierCfg.MaxAgents > 0 {
+	// 		maxAgents = tierCfg.MaxAgents
+	// 	}
+	// }
 	if maxAgents <= 0 {
 		maxAgents = 4 // Default to 4 concurrent agents
 	}
@@ -284,11 +259,9 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	// Buffer size of 1000 supports ~10 concurrent tasks with ~100 events each
 	emitter := NewEventEmitter(1000)
 
-	// Create prog coordinator for cross-session task tracking
-	progCoord := NewProgCoordinator(cfg.ProgClient, emitter, cfg.OriginalTaskID, cfg.Tier, cfg.ResumeEpicID)
-
-	// Create learning coordinator for learning capture on task completion
-	learningCoord := NewLearningCoordinator(progCoord, cfg.Tier)
+	// TODO: prog and learning coordinators removed - reinstate if needed
+	// progCoord := NewProgCoordinator(cfg.ProgClient, emitter, cfg.OriginalTaskID, cfg.Tier, cfg.ResumeEpicID)
+	// learningCoord := NewLearningCoordinator(progCoord, cfg.Tier)
 
 	// Create agent spawner (scheduler will be set later in Run)
 	spawner := NewAgentSpawner(cfg.Executor, collision, nil, emitter.Channel(), cfg.RepoPath)
@@ -347,7 +320,7 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	runConfig := &OrchestratorRunConfig{
 		SessionID:      sessionID,
 		RepoPath:       cfg.RepoPath,
-		Tier:           cfg.Tier,
+		Tier:           nil, // TODO: tier removed - always use default
 		MaxAgents:      maxAgents,
 		Greenfield:     cfg.Greenfield,
 		OriginalTaskID: cfg.OriginalTaskID,
@@ -370,11 +343,7 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 		collision:         collision,
 		protected:         protected,
 		overrideGate:      overrideGate,
-		learnings:         cfg.LearningSystem,
-		progCoord:         progCoord,
-		learningCoord:     learningCoord,
 		structureAnalyzer: structureAnalyzer,
-		stateDB:           cfg.StateDB,
 		runnerFactory:     cfg.ClaudeRunnerFactory,
 		logger:            logger,
 		emitter:           emitter,
@@ -383,10 +352,11 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 		pauseCtrl:         NewPauseController(),
 	}
 
+	// TODO: learning system removed - reinstate if needed
 	// Initialize effectiveness tracker if learning system is available
-	if ls, ok := cfg.LearningSystem.(*learning.LearningSystem); ok {
-		o.effectivenessTracker = learning.NewEffectivenessTracker(ls.GetStore())
-	}
+	// if ls, ok := cfg.LearningSystem.(*learning.LearningSystem); ok {
+	// 	o.effectivenessTracker = learning.NewEffectivenessTracker(ls.GetStore())
+	// }
 
 	return o
 }
@@ -417,8 +387,9 @@ func (o *Orchestrator) GetSessionBranch() string {
 
 // GetProgClient returns the prog client for cross-session task management.
 // Returns nil if prog features are disabled.
-func (o *Orchestrator) GetProgClient() prog.ProgTracker {
-	return o.progCoord.Client()
+// TODO: prog package removed - reinstate if needed
+func (o *Orchestrator) GetProgClient() interface{} {
+	return nil
 }
 
 // QuestionsAllowedForTask returns the number of questions allowed for the current task.
@@ -429,8 +400,9 @@ func (o *Orchestrator) QuestionsAllowedForTask(taskID string) int {
 
 // GetProgEpicID returns the prog epic ID for cross-session tracking.
 // Returns empty string if no epic is associated with this session.
+// TODO: prog package removed - reinstate if needed
 func (o *Orchestrator) GetProgEpicID() string {
-	return o.progCoord.EpicID()
+	return ""
 }
 
 // SetMergeConflict marks the orchestrator as having an active merge conflict.

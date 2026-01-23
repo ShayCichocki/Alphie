@@ -9,9 +9,6 @@ import (
 
 	"github.com/ShayCichocki/alphie/internal/agent"
 	"github.com/ShayCichocki/alphie/internal/orchestrator"
-	"github.com/ShayCichocki/alphie/internal/prog"
-	"github.com/ShayCichocki/alphie/internal/state"
-	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // ProgressPhase represents the current phase of the implementation loop.
@@ -93,8 +90,6 @@ type Controller struct {
 
 	// RepoPath is the path to the repository being audited.
 	RepoPath string
-	// ProjectName is the prog project name for task management.
-	ProjectName string
 
 	// parser parses architecture documents into feature specs.
 	parser *Parser
@@ -104,8 +99,6 @@ type Controller struct {
 	planner *Planner
 	// stopper evaluates stop conditions.
 	stopper *StopChecker
-	// progClient manages prog tasks.
-	progClient *prog.Client
 	// onProgress is called when progress events occur.
 	onProgress ProgressCallback
 	// runnerFactory creates ClaudeRunner instances.
@@ -135,20 +128,6 @@ type ControllerOption func(*Controller)
 func WithRepoPath(path string) ControllerOption {
 	return func(c *Controller) {
 		c.RepoPath = path
-	}
-}
-
-// WithProjectName sets the prog project name.
-func WithProjectName(name string) ControllerOption {
-	return func(c *Controller) {
-		c.ProjectName = name
-	}
-}
-
-// WithProgClient sets a custom prog client.
-func WithProgClient(client *prog.Client) ControllerOption {
-	return func(c *Controller) {
-		c.progClient = client
 	}
 }
 
@@ -246,20 +225,7 @@ type RunResult struct {
 // executes them via the /alphie skill pattern, and repeats until
 // a stop condition is met.
 func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error {
-	// Initialize prog client if not provided
-	if c.progClient == nil && c.ProjectName != "" {
-		client, err := prog.NewClientDefault(c.ProjectName)
-		if err != nil {
-			return fmt.Errorf("create prog client: %w", err)
-		}
-		c.progClient = client
-		defer client.Close()
-	}
-
-	// Initialize planner with prog client
-	if c.progClient != nil {
-		c.planner = NewPlanner(c.progClient)
-	}
+	// Prog client removed - keeping stateless
 
 	var result RunResult
 	var totalCost float64
@@ -372,92 +338,10 @@ func (c *Controller) Run(ctx context.Context, archDoc string, agents int) error 
 			return nil
 		}
 
-		if gapsFound > 0 && c.planner != nil {
-			c.emitProgress(ProgressEvent{
-				Phase:            PhasePlanning,
-				Iteration:        iteration,
-				FeaturesComplete: completedFeatures,
-				FeaturesTotal:    totalFeatures,
-				GapsFound:        gapsFound,
-				Cost:             totalCost,
-				Message:          fmt.Sprintf("Iteration %d/%d: Planning tasks for %d gaps...", iteration, c.MaxIterations, gapsFound),
-			})
-
-			planClaude := c.createRunner(ctx)
-			planResult, err := c.planner.Plan(ctx, gapReport, c.ProjectName, planClaude)
-			if err != nil {
-				return fmt.Errorf("plan epics (iteration %d): %w", iteration, err)
-			}
-
-			iterResult.EpicID = planResult.EpicID
-			iterResult.TasksCreated = len(planResult.TaskIDs)
-
-			// Initialize feature tracking for this iteration
-			c.featureToTasks = make(map[string][]string)
-			c.completedTasks = make(map[string]bool)
-			c.featureGaps = make(map[string]Gap)
-
-			// Build feature→task mapping
-			// TaskIDs correspond 1-to-1 with gaps in the order they appear
-			if len(planResult.TaskIDs) == len(gapReport.Gaps) {
-				for i, taskID := range planResult.TaskIDs {
-					gap := gapReport.Gaps[i]
-					featureID := gap.FeatureID
-
-					// Track which tasks belong to this feature
-					c.featureToTasks[featureID] = append(c.featureToTasks[featureID], taskID)
-					// Store gap details for later
-					c.featureGaps[featureID] = gap
-				}
-			} else {
-				// Mismatch between tasks and gaps - try to map what we can
-				log.Printf("[architect] WARNING: Task/Gap count mismatch (tasks=%d, gaps=%d), progress tracking may be inaccurate",
-					len(planResult.TaskIDs), len(gapReport.Gaps))
-
-				// Build best-effort mapping using min of both lengths
-				minLen := len(planResult.TaskIDs)
-				if len(gapReport.Gaps) < minLen {
-					minLen = len(gapReport.Gaps)
-				}
-
-				for i := 0; i < minLen; i++ {
-					taskID := planResult.TaskIDs[i]
-					gap := gapReport.Gaps[i]
-					featureID := gap.FeatureID
-
-					c.featureToTasks[featureID] = append(c.featureToTasks[featureID], taskID)
-					c.featureGaps[featureID] = gap
-				}
-			}
-
-			// Step 5: Execute epics via /alphie skill pattern
-			if planResult.EpicID != "" {
-				c.emitProgress(ProgressEvent{
-					Phase:            PhaseExecuting,
-					Iteration:        iteration,
-					FeaturesComplete: completedFeatures,
-					FeaturesTotal:    totalFeatures,
-					GapsFound:        gapsFound,
-					TasksCreated:     len(planResult.TaskIDs),
-					EpicID:           planResult.EpicID,
-					Cost:             totalCost,
-					Message:          fmt.Sprintf("Iteration %d/%d: Executing epic %s with %d tasks...", iteration, c.MaxIterations, planResult.EpicID, len(planResult.TaskIDs)),
-				})
-
-				completed, err := c.executeEpic(ctx, planResult.EpicID, agents)
-				if err != nil {
-					// Log error but continue to next iteration
-					// Epic execution failures are not fatal to the loop
-					c.emitProgress(ProgressEvent{
-						Phase:     PhaseExecuting,
-						Iteration: iteration,
-						EpicID:    planResult.EpicID,
-						Cost:      totalCost,
-						Message:   fmt.Sprintf("Warning: epic execution failed: %v", err),
-					})
-				}
-				iterResult.TasksCompleted = completed
-			}
+		// Planner removed - this needs to be replaced with direct orchestration
+		// For now, skip planning phase if gaps are found
+		if gapsFound > 0 {
+			log.Printf("[architect] Found %d gaps but planning system is disabled", gapsFound)
 		}
 
 		result.Iterations = append(result.Iterations, iterResult)
@@ -527,36 +411,12 @@ func (c *Controller) executeEpic(ctx context.Context, epicID string, agents int)
 		return 0, fmt.Errorf("orchestrator run: %w", err)
 	}
 
-	// Count completed tasks from prog client
-	if c.progClient != nil {
-		completed, total, err := c.progClient.ComputeEpicProgress(epicID)
-		if err != nil {
-			return 0, fmt.Errorf("compute epic progress: %w", err)
-		}
-		// Update epic status if complete
-		if completed == total && total > 0 {
-			_, _ = c.progClient.UpdateEpicStatusIfComplete(epicID)
-		}
-		return completed, nil
-	}
-
+	// Prog client removed - return 0 for now
 	return 0, nil
 }
 
 // createOrchestrator creates a new orchestrator instance for epic execution.
 func (c *Controller) createOrchestrator(epicID string, agents int) (*orchestrator.Orchestrator, error) {
-	// Open state database
-	db, err := state.OpenProject(c.RepoPath)
-	if err != nil {
-		return nil, fmt.Errorf("open state database: %w", err)
-	}
-
-	// Run migrations
-	if err := db.Migrate(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate database: %w", err)
-	}
-
 	// Create executor
 	executor, err := agent.NewExecutor(agent.ExecutorConfig{
 		RepoPath:      c.RepoPath,
@@ -564,7 +424,6 @@ func (c *Controller) createOrchestrator(epicID string, agents int) (*orchestrato
 		RunnerFactory: c.runnerFactory,
 	})
 	if err != nil {
-		db.Close()
 		return nil, fmt.Errorf("create executor: %w", err)
 	}
 
@@ -577,7 +436,6 @@ func (c *Controller) createOrchestrator(epicID string, agents int) (*orchestrato
 	orch := orchestrator.New(
 		orchestrator.RequiredConfig{
 			RepoPath: c.RepoPath,
-			Tier:     models.TierBuilder,
 			Executor: executor,
 		},
 		orchestrator.WithMaxAgents(agents),
@@ -585,9 +443,6 @@ func (c *Controller) createOrchestrator(epicID string, agents int) (*orchestrato
 		orchestrator.WithMergerClaude(mergerClaude),
 		orchestrator.WithSecondReviewerClaude(secondReviewerClaude),
 		orchestrator.WithRunnerFactory(c.runnerFactory),
-		orchestrator.WithStateDB(db),
-		orchestrator.WithProgClient(c.progClient),
-		orchestrator.WithResumeEpicID(epicID),
 	)
 
 	return orch, nil

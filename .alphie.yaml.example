@@ -1,0 +1,22 @@
+# Alphie Configuration Example
+# Copy this file to .alphie.yaml and customize as needed
+
+# API Configuration
+anthropic:
+  api_key: ""  # Or use ANTHROPIC_API_KEY environment variable
+  backend: "api"  # "api" (default) or "bedrock"
+
+# AWS Configuration (for Bedrock backend)
+aws:
+  region: "us-east-1"  # Or use AWS_REGION environment variable
+  # Use AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables for credentials
+
+# Execution Configuration
+execution:
+  model: "sonnet"  # Options: "sonnet" (default), "haiku", "opus"
+  max_agents: 3    # Maximum number of concurrent agents
+  max_retries: 3   # Maximum retries per task before escalation
+
+# Branch Configuration
+branch:
+  greenfield: false  # If true, merge directly to main (no session branch)

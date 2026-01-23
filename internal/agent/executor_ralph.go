@@ -14,20 +14,20 @@ func (e *Executor) runRalphLoopIfEnabled(
 	ctx context.Context,
 	result *ExecutionResult,
 	task *models.Task,
-	tier models.Tier,
+	tierIgnored interface{},
 	opts *ExecuteOptions,
 	worktreePath string,
 	verifyCtx *verificationContext,
 ) {
-	if opts == nil || !opts.EnableRalphLoop || !e.shouldRunRalphLoop(tier) {
+	if opts == nil || !opts.EnableRalphLoop {
 		return
 	}
 
-	ralphLoop := NewRalphLoop(tier, worktreePath)
+	ralphLoop := NewRalphLoop(tierIgnored, worktreePath)
 	ralphLoop.SetRunnerFactory(e.runnerFactory)
 
-	// Enable gates based on tier for the ralph loop's internal gate checks
-	gateConfig := GateConfigForTier(tier)
+	// Enable gates for the ralph loop's internal gate checks (simplified - no tier system)
+	gateConfig := GateConfigForTier(tierIgnored)
 	if gateConfig.Lint {
 		ralphLoop.EnableGate("lint")
 	}
@@ -106,10 +106,7 @@ func (e *Executor) handleExecutionFailure(
 
 	_ = e.agentMgr.Fail(agentID, result.Error)
 
-	// Capture potential learnings from failure
-	if e.failureAnalyzer != nil {
-		result.SuggestedLearnings = e.failureAnalyzer.AnalyzeFailure(result.Output, result.Error)
-	}
+	// Failure analysis removed - learning system has been removed
 }
 
 // runQualityGatesIfEnabled runs quality gates and updates result accordingly.
@@ -117,14 +114,14 @@ func (e *Executor) runQualityGatesIfEnabled(
 	result *ExecutionResult,
 	opts *ExecuteOptions,
 	worktreePath string,
-	tier models.Tier,
+	tierIgnored interface{},
 	agentID string,
 ) {
 	if opts == nil || !opts.EnableQualityGates {
 		return
 	}
 
-	gateResults := e.runQualityGates(worktreePath, tier)
+	gateResults := e.runQualityGates(worktreePath, tierIgnored)
 	passed := e.evaluateGatesWithBaseline(gateResults, opts.Baseline)
 	result.GatesPassed = &passed
 

@@ -6,10 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/ShayCichocki/alphie/internal/agent"
-	"github.com/ShayCichocki/alphie/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -70,17 +68,8 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create worktree manager: %w", err)
 	}
 
-	// Get active sessions from database
-	activeSessions, err := getActiveSessions()
-	if err != nil {
-		// If we can't get active sessions, assume none are active
-		// This is safer for cleanup
-		if cleanupVerbose {
-			fmt.Printf("Warning: Could not query active sessions: %v\n", err)
-			fmt.Println("Proceeding with empty active session list")
-		}
-		activeSessions = []string{}
-	}
+	// State DB removed - assume no active sessions
+	activeSessions := []string{}
 
 	// List orphans
 	orphans, err := wtManager.ListOrphans(activeSessions)
@@ -156,105 +145,10 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 
 	// Handle session cleanup if --sessions flag is set
 	if cleanupSessions {
-		if err := cleanupOldSessions(cwd); err != nil {
-			return err
-		}
+		fmt.Println("Session cleanup disabled - state database removed")
 	}
 
 	return nil
-}
-
-// cleanupOldSessions purges sessions older than 30 days.
-func cleanupOldSessions(cwd string) error {
-	const sessionMaxAge = 30 * 24 * time.Hour // 30 days
-
-	dbPath := state.ProjectDBPath(cwd)
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		// Fall back to global database
-		dbPath = state.GlobalDBPath()
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		fmt.Println("No database found - no sessions to purge.")
-		return nil
-	}
-
-	db, err := state.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("open database: %w", err)
-	}
-	defer db.Close()
-
-	if cleanupDryRun {
-		// Count sessions that would be purged
-		sessions, err := db.ListSessions(nil)
-		if err != nil {
-			return fmt.Errorf("list sessions: %w", err)
-		}
-
-		cutoff := time.Now().Add(-sessionMaxAge)
-		count := 0
-		for _, s := range sessions {
-			if s.StartedAt.Before(cutoff) {
-				count++
-			}
-		}
-		fmt.Printf("Dry run: would purge %d session(s) older than 30 days.\n", count)
-		return nil
-	}
-
-	purged, err := db.PurgeOldSessions(sessionMaxAge)
-	if err != nil {
-		return fmt.Errorf("purge old sessions: %w", err)
-	}
-
-	if purged > 0 {
-		fmt.Printf("Purged %d session(s) older than 30 days.\n", purged)
-	} else {
-		fmt.Println("No sessions older than 30 days found.")
-	}
-
-	return nil
-}
-
-// getActiveSessions returns the list of active session IDs from the database.
-func getActiveSessions() ([]string, error) {
-	// Try project database first
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-
-	dbPath := state.ProjectDBPath(cwd)
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		// Fall back to global database
-		dbPath = state.GlobalDBPath()
-	}
-
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		// No database exists, return empty list
-		return []string{}, nil
-	}
-
-	db, err := state.Open(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-	defer db.Close()
-
-	// Query active sessions
-	activeStatus := state.SessionActive
-	sessions, err := db.ListSessions(&activeStatus)
-	if err != nil {
-		return nil, fmt.Errorf("list sessions: %w", err)
-	}
-
-	sessionIDs := make([]string, len(sessions))
-	for i, s := range sessions {
-		sessionIDs[i] = s.ID
-	}
-
-	return sessionIDs, nil
 }
 
 // findGitRoot finds the root of the git repository starting from the given directory.

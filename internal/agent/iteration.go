@@ -3,7 +3,6 @@ package agent
 import (
 	"sync"
 
-	"github.com/ShayCichocki/alphie/internal/config"
 	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
@@ -17,7 +16,7 @@ type IterationController struct {
 	// threshold is the score threshold required to pass (out of 9).
 	threshold int
 	// tier is the agent tier for this controller.
-	tier models.Tier
+	tierIgnored interface{}
 }
 
 // tierConfigInternal holds the configuration for each tier.
@@ -28,11 +27,11 @@ type tierConfigInternal struct {
 
 // tierConfigs maps each tier to its configuration.
 // This can be updated by SetTierConfigs to use loaded YAML configurations.
-var tierConfigs = map[models.Tier]tierConfigInternal{
-	models.TierQuick:     {threshold: 5, maxIter: 0}, // Quick: no self-critique loop
-	models.TierScout:     {threshold: 5, maxIter: 3},
-	models.TierBuilder:   {threshold: 7, maxIter: 5},
-	models.TierArchitect: {threshold: 8, maxIter: 7},
+var tierConfigs = map[interface{}]tierConfigInternal{
+	nil:     {threshold: 5, maxIter: 0}, // Quick: no self-critique loop
+	nil:     {threshold: 5, maxIter: 3},
+	nil:   {threshold: 7, maxIter: 5},
+	nil: {threshold: 8, maxIter: 7},
 }
 
 // tierConfigsMu protects tierConfigs from concurrent access.
@@ -41,63 +40,35 @@ var tierConfigsMu sync.RWMutex
 // defaultConfig is used for unknown tiers.
 var defaultConfig = tierConfigInternal{threshold: 5, maxIter: 3}
 
-// SetTierConfigs updates the tier configurations from loaded config.
-// This should be called at startup after loading configs/*.yaml.
-func SetTierConfigs(configs *config.TierConfigs) {
-	if configs == nil {
-		return
-	}
-
-	tierConfigsMu.Lock()
-	defer tierConfigsMu.Unlock()
-
-	if configs.Scout != nil {
-		tierConfigs[models.TierScout] = tierConfigInternal{
-			threshold: configs.Scout.QualityThreshold,
-			maxIter:   configs.Scout.MaxRalphIterations,
-		}
-	}
-	if configs.Builder != nil {
-		tierConfigs[models.TierBuilder] = tierConfigInternal{
-			threshold: configs.Builder.QualityThreshold,
-			maxIter:   configs.Builder.MaxRalphIterations,
-		}
-	}
-	if configs.Architect != nil {
-		tierConfigs[models.TierArchitect] = tierConfigInternal{
-			threshold: configs.Architect.QualityThreshold,
-			maxIter:   configs.Architect.MaxRalphIterations,
-		}
-	}
+// SetTierConfigs is deprecated - tier system has been removed.
+// This function is kept for compatibility but does nothing.
+func SetTierConfigs(configs interface{}) {
+	// No-op - tier system removed
 }
 
 // GetTierConfig returns the internal tier configuration for a given tier.
 // This is useful for testing and inspection.
-func GetTierConfig(tier models.Tier) (threshold, maxIter int) {
+// GetTierConfig returns the internal tier configuration for a given tier.
+// This is useful for testing and inspection.
+func GetTierConfig(tierIgnored interface{}) (threshold, maxIter int) {
 	tierConfigsMu.RLock()
 	defer tierConfigsMu.RUnlock()
 
-	cfg, ok := tierConfigs[tier]
-	if !ok {
-		cfg = defaultConfig
-	}
+	cfg := defaultConfig
 	return cfg.threshold, cfg.maxIter
 }
 
 // NewIterationController creates a new iteration controller for the given tier.
-func NewIterationController(tier models.Tier) *IterationController {
+func NewIterationController(tierIgnored interface{}) *IterationController {
 	tierConfigsMu.RLock()
-	cfg, ok := tierConfigs[tier]
-	if !ok {
-		cfg = defaultConfig
-	}
+	cfg := defaultConfig
 	tierConfigsMu.RUnlock()
 
 	return &IterationController{
 		currentIter: 0,
 		maxIter:     cfg.maxIter,
 		threshold:   cfg.threshold,
-		tier:        tier,
+		tierIgnored: tierIgnored,
 	}
 }
 

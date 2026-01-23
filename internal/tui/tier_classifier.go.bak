@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/ShayCichocki/alphie/internal/orchestrator"
+	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // ClassifyTier determines the appropriate tier for a task based on its text.

@@ -98,11 +98,11 @@ func (o *Orchestrator) handleAbortedTask(task *models.Task, result *agent.Execut
 	// Mark task as failed
 	task.Status = models.TaskStatusFailed
 	task.Error = failureMsg
-	// TODO: state persistence removed - o.updateTaskState(task)
-	// TODO: state persistence removed - o.updateAgentState(result.AgentID, "failed")
+	o.updateTaskState(task)
+	o.updateAgentState(result.AgentID, "failed")
 
 	// Update prog task status
-	// TODO: progCoord removed - o.progCoord.BlockTask(task.ID, failureMsg)
+	o.progCoord.BlockTask(task.ID, failureMsg)
 
 	// Emit detailed failure event
 	o.emitEvent(OrchestratorEvent{
@@ -149,7 +149,7 @@ func (o *Orchestrator) handleSuccessfulTask(ctx context.Context, task *models.Ta
 
 		// Post-merge verification: ensure the merged code builds
 		if o.mergeVerifier != nil && o.mergeVerifier.ShouldVerify() {
-			// TODO: progCoord removed - o.progCoord.LogTask(task.ID, "Verifying merged code builds...")
+			o.progCoord.LogTask(task.ID, "Verifying merged code builds...")
 
 			verifyResult, err := o.mergeVerifier.VerifyMerge(ctx, o.GetSessionBranch())
 			if err != nil || !verifyResult.Passed {
@@ -159,7 +159,7 @@ func (o *Orchestrator) handleSuccessfulTask(ctx context.Context, task *models.Ta
 					errorMsg = verifyResult.Error.Error()
 				}
 
-				// TODO: progCoord removed - o.progCoord.LogTask(task.ID, fmt.Sprintf("Build verification failed: %s", errorMsg))
+				o.progCoord.LogTask(task.ID, fmt.Sprintf("Build verification failed: %s", errorMsg))
 				o.logger.Log("[task_completion] build verification failed for task %s: %v", task.ID, errorMsg)
 
 				// Rollback by resetting to the commit before the merge
@@ -169,7 +169,7 @@ func (o *Orchestrator) handleSuccessfulTask(ctx context.Context, task *models.Ta
 					return mergeOutcome, fmt.Errorf("verification failed (%v) and rollback failed (%v)", errorMsg, rollbackErr)
 				}
 
-				// TODO: progCoord removed - o.progCoord.LogTask(task.ID, "Merge rolled back due to build failure")
+				o.progCoord.LogTask(task.ID, "Merge rolled back due to build failure")
 				o.logger.Log("[task_completion] rolled back merge for task %s", task.ID)
 
 				// Emit verification failure event
@@ -188,7 +188,7 @@ func (o *Orchestrator) handleSuccessfulTask(ctx context.Context, task *models.Ta
 			}
 
 			// Verification passed
-			// TODO: progCoord removed - o.progCoord.LogTask(task.ID, fmt.Sprintf("Build verification passed (%v)", verifyResult.Duration))
+			o.progCoord.LogTask(task.ID, fmt.Sprintf("Build verification passed (%v)", verifyResult.Duration))
 			o.logger.Log("[task_completion] build verification passed for task %s in %v", task.ID, verifyResult.Duration)
 		}
 	}
@@ -199,8 +199,8 @@ func (o *Orchestrator) handleSuccessfulTask(ctx context.Context, task *models.Ta
 	task.CompletedAt = &now
 
 	// Update state persistence
-	// TODO: state persistence removed - o.updateTaskState(task)
-	// TODO: state persistence removed - o.updateAgentState(result.AgentID, "done")
+	o.updateTaskState(task)
+	o.updateAgentState(result.AgentID, "done")
 
 	// Reset override gate state for this task
 	if o.overrideGate != nil {
@@ -208,7 +208,7 @@ func (o *Orchestrator) handleSuccessfulTask(ctx context.Context, task *models.Ta
 	}
 
 	// Update prog task status to done
-	// TODO: progCoord removed - o.progCoord.CompleteTask(task.ID)
+	o.progCoord.CompleteTask(task.ID)
 
 	// Learning system removed - no capture on completion
 
@@ -251,15 +251,15 @@ func (o *Orchestrator) handleFailedTask(task *models.Task, result *agent.Executi
 		log.Printf("[orchestrator] task %s failed after %d attempts, no more retries", task.ID, task.ExecutionCount)
 	}
 
-	// TODO: state persistence removed - o.updateTaskState(task)
-	// TODO: state persistence removed - o.updateAgentState(result.AgentID, "failed")
+	o.updateTaskState(task)
+	o.updateAgentState(result.AgentID, "failed")
 
 	// Learning system removed - no failure learning lookup
 
 	if shouldRetry {
-		// TODO: progCoord removed - o.progCoord.LogTask(task.ID, fmt.Sprintf("Attempt %d failed: %s. Retrying...", task.ExecutionCount, result.Error))
+		o.progCoord.LogTask(task.ID, fmt.Sprintf("Attempt %d failed: %s. Retrying...", task.ExecutionCount, result.Error))
 	} else {
-		// TODO: progCoord removed - o.progCoord.BlockTask(task.ID, result.Error)
+		o.progCoord.BlockTask(task.ID, result.Error)
 	}
 
 	o.logger.Log("[task_completion] EMITTING EventTaskFailed for task %s (agent %s, retry=%v)", task.ID, result.AgentID, shouldRetry)
@@ -282,7 +282,7 @@ func (o *Orchestrator) handleFailedTask(task *models.Task, result *agent.Executi
 // Returns the merge outcome and any error.
 func (o *Orchestrator) performMerge(ctx context.Context, taskID string, result *agent.ExecutionResult) (*MergeOutcome, error) {
 	// Log merge start to prog
-	// TODO: progCoord removed - o.progCoord.LogTask(taskID, "Starting merge operation (queued)")
+	o.progCoord.LogTask(taskID, "Starting merge operation (queued)")
 
 	// Construct agent branch name from the worktree
 	agentBranch := fmt.Sprintf("agent-%s", taskID)
@@ -295,20 +295,19 @@ func (o *Orchestrator) performMerge(ctx context.Context, taskID string, result *
 	select {
 	case outcome := <-resultCh:
 		if outcome.Success {
-			// TODO: progCoord removed - reinstate if needed
 			// Log merge success to prog
-			// msg := "Merge completed successfully"
-			// if outcome.FallbackUsed {
-			// 	msg = fmt.Sprintf("Merge completed with fallback: %s", outcome.Reason)
-			// }
-			// o.progCoord.LogTask(taskID, msg)
+			msg := "Merge completed successfully"
+			if outcome.FallbackUsed {
+				msg = fmt.Sprintf("Merge completed with fallback: %s", outcome.Reason)
+			}
+			o.progCoord.LogTask(taskID, msg)
 
 			// Note: second review is handled by the merge queue if needed
 			return &outcome, nil
 		}
 
 		// Merge failed
-		// TODO: progCoord removed - o.progCoord.LogTask(taskID, fmt.Sprintf("Merge failed: %s", outcome.Reason))
+		o.progCoord.LogTask(taskID, fmt.Sprintf("Merge failed: %s", outcome.Reason))
 		return &outcome, fmt.Errorf("merge failed: %s: %w", outcome.Reason, outcome.Error)
 
 	case <-ctx.Done():

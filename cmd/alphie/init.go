@@ -9,11 +9,6 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
-
-	"github.com/ShayCichocki/alphie/internal/config"
-	"github.com/ShayCichocki/alphie/internal/learning"
-	"github.com/ShayCichocki/alphie/internal/state"
 )
 
 var (
@@ -33,7 +28,6 @@ This command sets up everything needed to run Alphie:
   - Verifies prerequisites (git, claude CLI)
   - Initializes git repository if needed
   - Creates .alphie directory structure
-  - Initializes databases (state.db, learnings.db)
   - Optionally creates example configuration files
 
 The directory argument is optional and defaults to the current directory.
@@ -81,8 +75,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Initializing Alphie in %s...\n\n", absPath)
 
 	// Step 2: Check if already initialized
-	stateDBPath := filepath.Join(absPath, ".alphie", "state.db")
-	if _, err := os.Stat(stateDBPath); err == nil && !initForce {
+	alphieDir := filepath.Join(absPath, ".alphie")
+	if _, err := os.Stat(alphieDir); err == nil && !initForce {
 		fmt.Printf("Directory already initialized. Use --force to reinitialize.\n")
 		return nil
 	}
@@ -119,7 +113,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 5: Create .alphie structure
-	alphieDir := filepath.Join(absPath, ".alphie")
+	// alphieDir already defined above
 	if err := os.MkdirAll(alphieDir, 0755); err != nil {
 		return fmt.Errorf("creating .alphie directory: %w", err)
 	}
@@ -130,29 +124,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	printStatus("✓", "Created .alphie directory structure", color.FgGreen)
 
-	// Step 6: Initialize state database
-	stateDB, err := state.OpenProject(absPath)
-	if err != nil {
-		return fmt.Errorf("initializing state database: %w", err)
-	}
+	// State and learning databases removed - keeping stateless
 
-	if err := stateDB.Migrate(); err != nil {
-		stateDB.Close()
-		return fmt.Errorf("migrating state database: %w", err)
-	}
-	stateDB.Close()
-	printStatus("✓", "Initialized state database (.alphie/state.db)", color.FgGreen)
-
-	// Step 7: Initialize learning database
-	learningDBPath := filepath.Join(absPath, ".alphie", "learnings.db")
-	learningSystem, err := learning.NewLearningSystem(learningDBPath)
-	if err != nil {
-		return fmt.Errorf("initializing learning database: %w", err)
-	}
-	learningSystem.Close()
-	printStatus("✓", "Initialized learning database (.alphie/learnings.db)", color.FgGreen)
-
-	// Step 8: Update .gitignore
+	// Step 6: Update .gitignore
 	if !initNoGit {
 		if err := updateGitignore(absPath); err != nil {
 			return fmt.Errorf("updating .gitignore: %w", err)
@@ -160,7 +134,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		printStatus("✓", "Updated .gitignore with Alphie entries", color.FgGreen)
 	}
 
-	// Step 9: Create config files (if --with-configs)
+	// Step 7: Create config files (if --with-configs)
 	if initWithConfigs {
 		if err := createExampleConfigs(absPath); err != nil {
 			return fmt.Errorf("creating example configs: %w", err)
@@ -173,7 +147,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		printStatus("✓", "Created .alphie.yaml template", color.FgGreen)
 	}
 
-	// Step 10: Success message
+	// Step 8: Success message
 	projectName := initProjectName
 	if projectName == "" {
 		projectName = detectProjectName(absPath)
@@ -287,7 +261,7 @@ func ensureInitialCommit(repoPath string) error {
 	gitignorePath := filepath.Join(repoPath, ".gitignore")
 	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
 		// Create minimal .gitignore
-		content := "# Alphie\n.alphie/state.db*\n.alphie/learnings.db*\n.alphie/logs/\nalphie\n"
+		content := "# Alphie\n.alphie/logs/\nalphie\n"
 		if err := os.WriteFile(gitignorePath, []byte(content), 0644); err != nil {
 			return fmt.Errorf("creating .gitignore: %w", err)
 		}
@@ -366,7 +340,6 @@ func updateGitignore(repoPath string) error {
 
 	// Check if Alphie entries already exist
 	alphieEntries := []string{
-		".alphie/state.db*",
 		".alphie/learnings.db*",
 		".alphie/logs/",
 		"alphie",
@@ -402,35 +375,12 @@ func updateGitignore(repoPath string) error {
 	return os.WriteFile(gitignorePath, []byte(newContent.String()), 0644)
 }
 
-// createExampleConfigs creates example tier configuration files
+// createExampleConfigs creates example configuration files
+// Note: Tier configs have been removed as part of simplification.
+// This function is kept for future config file examples.
 func createExampleConfigs(repoPath string) error {
-	configsDir := filepath.Join(repoPath, "configs")
-	if err := os.MkdirAll(configsDir, 0755); err != nil {
-		return fmt.Errorf("creating configs directory: %w", err)
-	}
-
-	// Get default tier configs
-	defaults := config.DefaultTierConfigs()
-
-	// Marshal and write each tier config
-	tiers := map[string]*config.TierConfig{
-		"scout":     defaults.Scout,
-		"builder":   defaults.Builder,
-		"architect": defaults.Architect,
-	}
-
-	for name, tierConfig := range tiers {
-		data, err := yaml.Marshal(tierConfig)
-		if err != nil {
-			return fmt.Errorf("marshaling %s config: %w", name, err)
-		}
-
-		configPath := filepath.Join(configsDir, name+".yaml")
-		if err := os.WriteFile(configPath, data, 0644); err != nil {
-			return fmt.Errorf("writing %s config: %w", name, err)
-		}
-	}
-
+	// Tier configs removed - no longer needed
+	// This function is kept as a placeholder for future config examples
 	return nil
 }
 

@@ -4,7 +4,6 @@ package orchestrator
 import (
 	"github.com/ShayCichocki/alphie/internal/agent"
 	"github.com/ShayCichocki/alphie/internal/orchestrator/policy"
-	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // OrchestratorRunConfig contains runtime configuration that is immutable after construction.
@@ -17,7 +16,7 @@ type OrchestratorRunConfig struct {
 	RepoPath string
 
 	// Tier is the agent tier for task execution (determines question allowance, etc.).
-	Tier models.Tier
+	Tier interface{}
 
 	// MaxAgents is the maximum number of concurrent agents allowed.
 	MaxAgents int
@@ -41,7 +40,7 @@ type OrchestratorRunConfig struct {
 func NewRunConfig(
 	sessionID string,
 	repoPath string,
-	tier models.Tier,
+	tier interface{},
 	maxAgents int,
 	greenfield bool,
 	originalTaskID string,

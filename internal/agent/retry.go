@@ -6,8 +6,6 @@ import (
 	"log"
 	"sync"
 	"time"
-
-	"github.com/ShayCichocki/alphie/internal/learning"
 )
 
 // RetryDecision represents the decision after evaluating a failure.
@@ -48,26 +46,22 @@ type RetryContext struct {
 	SuggestedFix string
 	// Strategy describes what approach to try next.
 	Strategy string
-	// Learnings contains any relevant learnings found for this error.
-	Learnings []*learning.Learning
 }
 
 // RetryHandler manages failure handling and retry logic for agents.
 // It uses a tiered strategy: first retrying with the original approach,
-// then searching learnings for known fixes, and finally escalating to human.
+// then trying alternative strategies, and finally escalating to human.
 type RetryHandler struct {
-	learnings   *learning.LearningSystem
 	maxAttempts int
-	attempts    map[string]int       // agentID -> attempt count
-	errors      map[string][]string  // agentID -> list of errors encountered
+	attempts    map[string]int      // agentID -> attempt count
+	errors      map[string][]string // agentID -> list of errors encountered
 	mu          sync.RWMutex
 }
 
-// NewRetryHandler creates a new RetryHandler with the given learning system.
-// The learning system is used to search for known fixes when failures occur.
-func NewRetryHandler(learnings *learning.LearningSystem) *RetryHandler {
+// NewRetryHandler creates a new RetryHandler.
+// The handler uses a simple retry strategy with escalation.
+func NewRetryHandler() *RetryHandler {
 	return &RetryHandler{
-		learnings:   learnings,
 		maxAttempts: 5,
 		attempts:    make(map[string]int),
 		errors:      make(map[string][]string),
@@ -95,7 +89,7 @@ func (h *RetryHandler) MaxAttempts() int {
 // HandleFailure evaluates a failure and returns a retry context and decision.
 // The tiered strategy is:
 //   - Attempt 1: Retry with original approach
-//   - Attempts 2-4: Search learnings for similar errors, apply suggested fix or try alternative
+//   - Attempts 2-4: Try alternative strategies
 //   - Attempt 5+: Escalate to human
 func (h *RetryHandler) HandleFailure(agentID string, errorMsg string) (*RetryContext, RetryDecision) {
 	h.mu.Lock()
@@ -122,23 +116,8 @@ func (h *RetryHandler) HandleFailure(agentID string, errorMsg string) (*RetryCon
 		return ctx, Retry
 	}
 
-	// Attempts 2 to maxAttempts-1: Search learnings and try alternatives
+	// Attempts 2 to maxAttempts-1: Try alternative strategies
 	if attempt < maxAttempts {
-		// Search learnings for similar errors
-		if h.learnings != nil {
-			learnings, err := h.learnings.OnFailure(errorMsg)
-			if err == nil && len(learnings) > 0 {
-				// Found relevant learnings - use the best match
-				best := learnings[0]
-				ctx.Learnings = learnings
-				ctx.SuggestedFix = best.Action
-				ctx.Strategy = "apply_learning"
-				log.Printf("[retry] agent %s: attempt %d, applying learning fix: %s", agentID, attempt, best.Action)
-				return ctx, Retry
-			}
-		}
-
-		// No learnings found - try alternative strategy based on attempt number
 		ctx.Strategy = h.selectAlternativeStrategy(attempt)
 		log.Printf("[retry] agent %s: attempt %d, trying alternative strategy: %s", agentID, attempt, ctx.Strategy)
 		return ctx, Retry

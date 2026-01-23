@@ -4,10 +4,8 @@ package orchestrator
 import (
 	"sync"
 
-	"github.com/ShayCichocki/alphie/internal/config"
 	"github.com/ShayCichocki/alphie/internal/orchestrator/policy"
 	"github.com/ShayCichocki/alphie/internal/protect"
-	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // ScoutOverrideGate manages conditions under which a Scout agent can ask questions.
@@ -21,7 +19,7 @@ type ScoutOverrideGate struct {
 	// policy contains configurable override thresholds.
 	policy *policy.OverridePolicy
 	// tierConfigs provides tier-specific question limits.
-	tierConfigs *config.TierConfigs
+	tierConfigs interface{}
 	// taskAttempts tracks the number of attempts per task.
 	taskAttempts map[string]int
 	// taskProtected tracks whether a task touches protected areas.
@@ -60,7 +58,7 @@ func NewScoutOverrideGate(protected *protect.Detector, cfg ScoutOverrideConfig) 
 }
 
 // NewScoutOverrideGateWithPolicy creates a new ScoutOverrideGate with policy and tier configs.
-func NewScoutOverrideGateWithPolicy(protected *protect.Detector, p *policy.OverridePolicy, tierCfg *config.TierConfigs) *ScoutOverrideGate {
+func NewScoutOverrideGateWithPolicy(protected *protect.Detector, p *policy.OverridePolicy, tierCfg interface{}) *ScoutOverrideGate {
 	if p == nil {
 		p = &policy.Default().Override
 	}
@@ -206,32 +204,18 @@ func (g *ScoutOverrideGate) IsProtectedAreaEnabled() bool {
 // QuestionsAllowed calculates the number of questions allowed for a tier and task.
 // For Scout tier, this is normally 0 but can be overridden by gate conditions.
 // For other tiers, it returns the standard allowance from loaded config.
-func QuestionsAllowed(tier models.Tier, gate *ScoutOverrideGate, taskID string) int {
+func QuestionsAllowed(tier interface{}, gate *ScoutOverrideGate, taskID string) int {
 	return QuestionsAllowedWithConfig(tier, gate, taskID, nil)
 }
 
 // QuestionsAllowedWithConfig calculates questions allowed with explicit tier config.
 // This is the preferred function as it doesn't rely on global state.
-func QuestionsAllowedWithConfig(tier models.Tier, gate *ScoutOverrideGate, taskID string, tierCfg *config.TierConfigs) int {
-	// Try to get tier config from gate if not provided
-	if tierCfg == nil && gate != nil && gate.tierConfigs != nil {
-		tierCfg = gate.tierConfigs
-	}
-
-	var questionsAllowed int
-	if tierCfg != nil {
-		tc := tierCfg.Get(tier)
-		if tc != nil {
-			questionsAllowed = tc.GetQuestionsAllowedInt()
-		} else {
-			questionsAllowed = getDefaultQuestionsAllowed(tier)
-		}
-	} else {
-		questionsAllowed = getDefaultQuestionsAllowed(tier)
-	}
+func QuestionsAllowedWithConfig(tier interface{}, gate *ScoutOverrideGate, taskID string, tierCfg interface{}) int {
+	// Simplified: always use default questions allowed
+	questionsAllowed := getDefaultQuestionsAllowed(tier)
 
 	// For Scout tier, apply override gate logic
-	if tier == models.TierScout {
+	if tier == nil {
 		if questionsAllowed == 0 && gate != nil && gate.CanAskQuestion(taskID) {
 			return 1 // Allow one question when override is active
 		}
@@ -242,13 +226,13 @@ func QuestionsAllowedWithConfig(tier models.Tier, gate *ScoutOverrideGate, taskI
 
 // getDefaultQuestionsAllowed returns hardcoded defaults for questions allowed.
 // This is used as a fallback when tier configs are not loaded.
-func getDefaultQuestionsAllowed(tier models.Tier) int {
+func getDefaultQuestionsAllowed(tier interface{}) int {
 	switch tier {
-	case models.TierScout:
+	case nil:
 		return 0 // Scout normally cannot ask questions
-	case models.TierBuilder:
+	case nil:
 		return 2 // Builder can ask 1-2 questions
-	case models.TierArchitect:
+	case nil:
 		return -1 // Architect has unlimited questions (-1 = unlimited)
 	default:
 		return 0

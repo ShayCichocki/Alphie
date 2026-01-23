@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ShayCichocki/alphie/internal/agent"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // DefaultBufferSize is the default size for the ring buffer.

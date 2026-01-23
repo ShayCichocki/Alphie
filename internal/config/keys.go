@@ -68,10 +68,9 @@ func MaskAPIKey(key string) string {
 type KeySource string
 
 const (
-	KeySourceEnv     KeySource = "environment"
-	KeySourceConfig  KeySource = "config_file"
-	KeySourceProject KeySource = "project_config"
-	KeySourceNone    KeySource = "none"
+	KeySourceEnv    KeySource = "environment"
+	KeySourceConfig KeySource = "config_file"
+	KeySourceNone   KeySource = "none"
 )
 
 // GetAPIKeySource returns where the API key was sourced from.
@@ -83,9 +82,6 @@ func GetAPIKeySource(cfg *Config) KeySource {
 	if cfg != nil && cfg.Anthropic.APIKey != "" {
 		key := os.ExpandEnv(cfg.Anthropic.APIKey)
 		if key != "" && !strings.HasPrefix(key, "${") {
-			if GetProjectConfigPath() != "" {
-				return KeySourceProject
-			}
 			return KeySourceConfig
 		}
 	}

@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/ShayCichocki/alphie/internal/agent"
-	"github.com/ShayCichocki/alphie/internal/prog"
 )
 
 // PlanResult contains the IDs of created prog items.
@@ -22,16 +21,14 @@ type PlanResult struct {
 	TaskIDs []string
 }
 
-// Planner generates prog epics and tasks from audit gaps.
+// Planner generates epics and tasks from audit gaps.
+// NOTE: Prog client dependency removed - this is a stub for now.
 type Planner struct {
-	client *prog.Client
 }
 
-// NewPlanner creates a new Planner with the given prog client.
-func NewPlanner(client *prog.Client) *Planner {
-	return &Planner{
-		client: client,
-	}
+// NewPlanner creates a new Planner.
+func NewPlanner() *Planner {
+	return &Planner{}
 }
 
 // Phase represents a group of related gaps that can be worked on together.
@@ -45,68 +42,8 @@ type Phase struct {
 }
 
 func (p *Planner) Plan(ctx context.Context, gaps *GapReport, projectName string, claude agent.ClaudeRunner) (*PlanResult, error) {
-	if gaps == nil || len(gaps.Gaps) == 0 {
-		return &PlanResult{}, nil
-	}
-
-	phases := p.groupGapsIntoPhases(ctx, gaps.Gaps, claude)
-
-	// Create epic for the entire implementation
-	epicTitle := p.generateEpicTitle(gaps)
-	epicDesc := p.generateEpicDescription(gaps, phases)
-
-	epicID, err := p.client.CreateEpic(epicTitle, &prog.EpicOptions{
-		Project:     projectName,
-		Description: epicDesc,
-		Priority:    2,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create epic: %w", err)
-	}
-
-	// Create tasks for each phase
-	result := &PlanResult{
-		EpicID:  epicID,
-		TaskIDs: make([]string, 0, len(gaps.Gaps)),
-	}
-
-	// Track task IDs by phase for dependency management
-	phaseTaskIDs := make([][]string, len(phases))
-
-	for i, phase := range phases {
-		phaseTaskIDs[i] = make([]string, 0, len(phase.Gaps))
-
-		for gapIdx, gap := range phase.Gaps {
-			var dependsOn []string
-
-			if gapIdx == 0 {
-				for _, depPhaseIdx := range phase.DependsOnPhases {
-					if depPhaseIdx < i && len(phaseTaskIDs[depPhaseIdx]) > 0 {
-						dependsOn = append(dependsOn, phaseTaskIDs[depPhaseIdx][len(phaseTaskIDs[depPhaseIdx])-1])
-					}
-				}
-			}
-
-			taskTitle := p.generateTaskTitle(gap)
-			taskDesc := p.generateTaskDescription(gap)
-
-			taskID, err := p.client.CreateTask(taskTitle, &prog.TaskOptions{
-				Project:     projectName,
-				Description: taskDesc,
-				Priority:    p.gapPriority(gap),
-				ParentID:    epicID,
-				DependsOn:   dependsOn,
-			})
-			if err != nil {
-				return result, fmt.Errorf("create task for gap %s: %w", gap.FeatureID, err)
-			}
-
-			phaseTaskIDs[i] = append(phaseTaskIDs[i], taskID)
-			result.TaskIDs = append(result.TaskIDs, taskID)
-		}
-	}
-
-	return result, nil
+	// Prog client removed - this is a stub that returns empty result
+	return &PlanResult{}, fmt.Errorf("planner is disabled - prog system removed")
 }
 
 // DependencyOrderItem represents a gap with its inferred priority order.

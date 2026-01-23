@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/ShayCichocki/alphie/internal/protect"
-	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // TierSelector selects the appropriate tier based on task signals.
@@ -28,15 +27,15 @@ func NewTierSelector(detector *protect.Detector) *TierSelector {
 //  3. Quick keywords (typo, rename) -> Quick tier
 //  4. Scout keywords (find, search, docs) -> Scout tier
 //  5. Default -> Builder tier
-func (s *TierSelector) SelectTier(taskDescription string) models.Tier {
+func (s *TierSelector) SelectTier(taskDescription string) interface{} {
 	// Check for architect keywords first (highest priority)
 	if IsArchitectKeyword(taskDescription) {
-		return models.TierArchitect
+		return nil
 	}
 
 	// Check for protected areas in the task description.
 	if s.protectedDetector != nil && s.containsProtectedReference(taskDescription) {
-		return models.TierArchitect
+		return nil
 	}
 
 	// Use the shared classification for remaining tiers
@@ -82,7 +81,7 @@ func (s *TierSelector) containsProtectedReference(taskDescription string) bool {
 // 3. Quick keywords → TierQuick
 // 4. Scout keywords → TierScout
 // 5. Default → TierBuilder
-func SelectTier(taskDescription string) models.Tier {
+func SelectTier(taskDescription string) interface{} {
 	detector := protect.New()
 	selector := NewTierSelector(detector)
 	return selector.SelectTier(taskDescription)

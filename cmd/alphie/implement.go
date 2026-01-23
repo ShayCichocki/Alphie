@@ -179,7 +179,8 @@ func runImplement(cmd *cobra.Command, args []string) error {
 		implementBudget,
 		implementNoConvergeAfter,
 		architect.WithRepoPath(repoPath),
-		architect.WithProjectName(projectName),
+		// TODO: WithProjectName removed - reinstate if needed
+		// architect.WithProjectName(projectName),
 		architect.WithProgressCallback(progressCallback),
 		architect.WithRunnerFactory(runnerFactory),
 	)

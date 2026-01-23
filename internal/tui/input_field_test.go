@@ -3,9 +3,9 @@ package tui
 import (
 	"testing"
 
+	"github.com/ShayCichocki/alphie/pkg/models"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 func TestNewInputField(t *testing.T) {
@@ -98,8 +98,8 @@ func TestInputField_Update_Enter_QuickPrefix(t *testing.T) {
 		t.Fatalf("Expected TaskSubmittedMsg, got %T", result)
 	}
 
-	if submitted.Tier != models.TierQuick {
-		t.Errorf("Tier = %q, want %q", submitted.Tier, models.TierQuick)
+	if submitted.Tier != nil {
+		t.Errorf("Tier = %q, want %q", submitted.Tier, nil)
 	}
 	if submitted.Task != "change button color" {
 		t.Errorf("Task = %q, want %q", submitted.Task, "change button color")
@@ -116,8 +116,8 @@ func TestInputField_Update_Enter_ArchitectPrefix(t *testing.T) {
 	result := cmd()
 	submitted := result.(TaskSubmittedMsg)
 
-	if submitted.Tier != models.TierArchitect {
-		t.Errorf("Tier = %q, want %q", submitted.Tier, models.TierArchitect)
+	if submitted.Tier != nil {
+		t.Errorf("Tier = %q, want %q", submitted.Tier, nil)
 	}
 }
 
@@ -197,14 +197,14 @@ func TestInputField_View_WithText(t *testing.T) {
 func TestTaskSubmittedMsg_Fields(t *testing.T) {
 	msg := TaskSubmittedMsg{
 		Task: "implement feature",
-		Tier: models.TierBuilder,
+		Tier: nil,
 	}
 
 	if msg.Task != "implement feature" {
 		t.Errorf("Task = %q, want %q", msg.Task, "implement feature")
 	}
-	if msg.Tier != models.TierBuilder {
-		t.Errorf("Tier = %q, want %q", msg.Tier, models.TierBuilder)
+	if msg.Tier != nil {
+		t.Errorf("Tier = %q, want %q", msg.Tier, nil)
 	}
 }
 
@@ -230,37 +230,37 @@ func TestInputField_TierClassification(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		wantTier models.Tier
+		wantTier interface{}
 		wantTask string
 	}{
 		{
 			name:     "quick prefix",
 			input:    "!quick fix typo",
-			wantTier: models.TierQuick,
+			wantTier: nil,
 			wantTask: "fix typo",
 		},
 		{
 			name:     "scout prefix",
 			input:    "!scout find auth code",
-			wantTier: models.TierScout,
+			wantTier: nil,
 			wantTask: "find auth code",
 		},
 		{
 			name:     "builder prefix",
 			input:    "!builder add feature",
-			wantTier: models.TierBuilder,
+			wantTier: nil,
 			wantTask: "add feature",
 		},
 		{
 			name:     "default to builder",
 			input:    "add dark mode",
-			wantTier: models.TierBuilder,
+			wantTier: nil,
 			wantTask: "add dark mode",
 		},
 		{
 			name:     "scout keyword",
 			input:    "find the login form",
-			wantTier: models.TierScout,
+			wantTier: nil,
 			wantTask: "find the login form",
 		},
 	}

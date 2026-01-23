@@ -32,10 +32,17 @@ func createRunnerFactory(useCLI bool) (agent.ClaudeRunnerFactory, error) {
 
 // createRunnerFactoryWithModel creates an API factory with a specific model.
 func createRunnerFactoryWithModel(model anthropic.Model) (agent.ClaudeRunnerFactory, error) {
-	// Load config to determine backend
-	cfg, err := config.Load()
+	// Get current working directory for config
+	cwd, err := os.Getwd()
 	if err != nil {
-		cfg = config.Default()
+		return nil, fmt.Errorf("get working directory: %w", err)
+	}
+
+	// Load config to determine backend
+	cfg, err := config.Load(cwd)
+	if err != nil {
+		// Use defaults if config not found
+		cfg = &config.Config{}
 	}
 
 	clientCfg := api.ClientConfig{
@@ -46,10 +53,9 @@ func createRunnerFactoryWithModel(model anthropic.Model) (agent.ClaudeRunnerFact
 	backend := strings.ToLower(cfg.Anthropic.Backend)
 	if backend == "bedrock" {
 		clientCfg.UseAWSBedrock = true
-		clientCfg.AWSRegion = cfg.AWS.Region
-		clientCfg.AWSProfile = cfg.AWS.Profile
+		clientCfg.AWSRegion = cfg.GetAWSRegion()
 	} else {
-		clientCfg.APIKey = cfg.Anthropic.APIKey
+		clientCfg.APIKey = cfg.GetAPIKey()
 	}
 
 	apiClient, err := api.NewClient(clientCfg)
@@ -57,7 +63,6 @@ func createRunnerFactoryWithModel(model anthropic.Model) (agent.ClaudeRunnerFact
 		return nil, fmt.Errorf("create API client: %w", err)
 	}
 
-	cwd, _ := os.Getwd()
 	notifs, err := api.NewNotificationManager(cwd)
 	if err != nil {
 		notifs = nil // Notifications are optional

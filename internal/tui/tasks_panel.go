@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ShayCichocki/alphie/pkg/models"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // TasksPanel displays a scrollable list of tasks with status indicators.
@@ -128,9 +128,9 @@ func (p *TasksPanel) buildVisibleItems() {
 	p.visibleItems = make([]visibleItem, 0)
 
 	// Group tasks by parent
-	epics := make(map[string][]*models.Task)      // parentID -> children
-	rootTasks := make([]*models.Task, 0)          // Tasks without parent
-	epicTasks := make(map[string]*models.Task)    // epicID -> epic task
+	epics := make(map[string][]*models.Task)   // parentID -> children
+	rootTasks := make([]*models.Task, 0)       // Tasks without parent
+	epicTasks := make(map[string]*models.Task) // epicID -> epic task
 
 	for _, task := range p.tasks {
 		if task.ParentID == "" {
@@ -217,7 +217,7 @@ func (p *TasksPanel) Update(msg tea.Msg) (*TasksPanel, tea.Cmd) {
 					return TaskRetryMsg{
 						TaskID:    task.ID,
 						TaskTitle: task.Title,
-						Tier:      task.Tier,
+						Tier:      nil, // TODO: tier removed - always use default
 					}
 				}
 			}

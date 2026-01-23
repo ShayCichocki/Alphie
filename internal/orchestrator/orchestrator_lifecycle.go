@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/ShayCichocki/alphie/internal/agent"
-	"github.com/ShayCichocki/alphie/internal/state"
 	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
@@ -40,10 +39,7 @@ func (o *Orchestrator) Run(ctx context.Context, request string) error {
 		}
 	}()
 
-	// Create session in state DB
-	if err := o.createSessionState(request); err != nil {
-		return fmt.Errorf("create session state: %w", err)
-	}
+	// Session state removed - keeping stateless
 
 	// Capture baseline at session start for regression detection
 	if err := o.captureBaseline(); err != nil {
@@ -53,19 +49,11 @@ func (o *Orchestrator) Run(ctx context.Context, request string) error {
 	// Get or decompose tasks
 	tasks, err := o.resolveTasks(ctx, request)
 	if err != nil {
-		o.updateSessionStatus(state.SessionFailed)
 		return err
-	}
-
-	// Persist tasks to state DB
-	if err := o.persistTasks(tasks); err != nil {
-		o.updateSessionStatus(state.SessionFailed)
-		return fmt.Errorf("persist tasks: %w", err)
 	}
 
 	// Build dependency graph
 	if err := o.graph.Build(tasks); err != nil {
-		o.updateSessionStatus(state.SessionFailed)
 		return fmt.Errorf("build dependency graph: %w", err)
 	}
 
@@ -84,14 +72,12 @@ func (o *Orchestrator) Run(ctx context.Context, request string) error {
 
 	// Create session branch
 	if err := o.sessionMgr.CreateBranch(); err != nil {
-		o.updateSessionStatus(state.SessionFailed)
 		return fmt.Errorf("create session branch: %w", err)
 	}
 
 	// Main execution loop
 	if err := o.runLoop(ctx); err != nil {
 		o.handleRunError()
-		o.updateSessionStatus(state.SessionFailed)
 		return fmt.Errorf("execution loop: %w", err)
 	}
 
@@ -99,7 +85,6 @@ func (o *Orchestrator) Run(ctx context.Context, request string) error {
 	o.finalizeSession()
 
 	// Mark session completed and emit done event
-	o.updateSessionStatus(state.SessionCompleted)
 	o.updateProgEpicStatus()
 	o.emitEvent(OrchestratorEvent{
 		Type:      EventSessionDone,
@@ -129,14 +114,15 @@ func (o *Orchestrator) captureBaseline() error {
 
 // resolveTasks either loads tasks from existing epic or decomposes the request.
 func (o *Orchestrator) resolveTasks(ctx context.Context, request string) ([]*models.Task, error) {
-	if o.progCoord.HasResumeEpic() {
-		tasks, err := o.progCoord.LoadTasksFromEpic(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("load tasks from prog epic %s: %w", o.progCoord.EpicID(), err)
-		}
-		log.Printf("[orchestrator] resuming epic %s with %d tasks", o.progCoord.EpicID(), len(tasks))
-		return tasks, nil
-	}
+	// TODO: prog epic resumption removed - reinstate if needed
+	// if o.progCoord.HasResumeEpic() {
+	// 	tasks, err := o.progCoord.LoadTasksFromEpic(ctx)
+	// 	if err != nil {
+	// 		return nil, fmt.Errorf("load tasks from prog epic %s: %w", o.progCoord.EpicID(), err)
+	// 	}
+	// 	log.Printf("[orchestrator] resuming epic %s with %d tasks", o.progCoord.EpicID(), len(tasks))
+	// 	return tasks, nil
+	// }
 
 	// Decompose request into tasks
 	tasks, err := o.decomposer.Decompose(ctx, request)
@@ -147,10 +133,11 @@ func (o *Orchestrator) resolveTasks(ctx context.Context, request string) ([]*mod
 		return nil, fmt.Errorf("no tasks generated from request")
 	}
 
+	// TODO: prog epic tracking removed - reinstate if needed
 	// Create prog epic and tasks for cross-session tracking
-	if err := o.progCoord.CreateEpicAndTasks(request, tasks); err != nil {
-		log.Printf("[orchestrator] warning: failed to create prog epic/tasks: %v", err)
-	}
+	// if err := o.progCoord.CreateEpicAndTasks(request, tasks); err != nil {
+	// 	log.Printf("[orchestrator] warning: failed to create prog epic/tasks: %v", err)
+	// }
 	return tasks, nil
 }
 
@@ -214,16 +201,17 @@ func (o *Orchestrator) finalizeSession() {
 }
 
 // updateProgEpicStatus updates the prog epic status if all tasks are complete.
+// TODO: prog epic tracking removed - reinstate if needed
 func (o *Orchestrator) updateProgEpicStatus() {
-	if o.progCoord.EpicID() == "" || !o.progCoord.IsConfigured() {
-		return
-	}
-	epicID := o.progCoord.EpicID()
-	if done, err := o.progCoord.Client().UpdateEpicStatusIfComplete(epicID); err != nil {
-		log.Printf("[orchestrator] warning: failed to update epic status: %v", err)
-	} else if done {
-		log.Printf("[orchestrator] epic %s marked as done", epicID)
-	}
+	// if o.progCoord.EpicID() == "" || !o.progCoord.IsConfigured() {
+	// 	return
+	// }
+	// epicID := o.progCoord.EpicID()
+	// if done, err := o.progCoord.Client().UpdateEpicStatusIfComplete(epicID); err != nil {
+	// 	log.Printf("[orchestrator] warning: failed to update epic status: %v", err)
+	// } else if done {
+	// 	log.Printf("[orchestrator] epic %s marked as done", epicID)
+	// }
 }
 
 // Stop signals the orchestrator to stop all work and clean up.

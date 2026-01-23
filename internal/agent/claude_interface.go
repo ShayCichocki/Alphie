@@ -10,9 +10,9 @@ import (
 // This abstraction allows for testing and alternative implementations.
 type TaskExecutor interface {
 	// Execute runs a task with a single agent using default options.
-	Execute(ctx context.Context, task *models.Task, tier models.Tier) (*ExecutionResult, error)
+	Execute(ctx context.Context, task *models.Task, tierIgnored interface{}) (*ExecutionResult, error)
 	// ExecuteWithOptions runs a task with a single agent using the provided options.
-	ExecuteWithOptions(ctx context.Context, task *models.Task, tier models.Tier, opts *ExecuteOptions) (*ExecutionResult, error)
+	ExecuteWithOptions(ctx context.Context, task *models.Task, tierIgnored interface{}, opts *ExecuteOptions) (*ExecutionResult, error)
 }
 
 // Compile-time verification that Executor implements TaskExecutor.

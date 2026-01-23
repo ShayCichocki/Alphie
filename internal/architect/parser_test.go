@@ -233,7 +233,7 @@ func TestParseResponse_EdgeCases(t *testing.T) {
 			wantErr:  false, // Empty spec is valid
 		},
 		{
-			name: "nested code blocks",
+			name:     "nested code blocks",
 			response: "```\n```json\n" + `{"name": "Test", "features": []}` + "\n```\n```",
 			wantErr:  false,
 		},

@@ -63,8 +63,6 @@ type Task struct {
 	DependsOn []string `json:"depends_on,omitempty"`
 	// AssignedTo is the ID of the agent working on this task.
 	AssignedTo string `json:"assigned_to,omitempty"`
-	// Tier is the agent tier required for this task.
-	Tier Tier `json:"tier"`
 	// TaskType is the classification of this task (SETUP, FEATURE, BUGFIX, REFACTOR).
 	TaskType TaskType `json:"task_type,omitempty"`
 	// FileBoundaries are the files/directories this task is expected to modify.
@@ -116,8 +114,6 @@ type Session struct {
 	ID string `json:"id"`
 	// RootTask is the ID of the root task being worked on.
 	RootTask string `json:"root_task"`
-	// Tier is the agent tier for this session.
-	Tier Tier `json:"tier"`
 	// TokenBudget is the maximum tokens allowed for this session.
 	TokenBudget int64 `json:"token_budget"`
 	// TokensUsed is the number of tokens consumed so far.

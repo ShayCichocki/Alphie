@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ShayCichocki/alphie/pkg/models"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // AgentCardData contains the data needed to render an agent card.

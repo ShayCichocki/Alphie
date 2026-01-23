@@ -8,10 +8,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var interactiveResume bool
-var interactiveGreenfield bool
-var interactiveUseCLI bool
-
 // CheckClaudeCLI verifies that the 'claude' CLI is available in PATH.
 // Returns an error with installation instructions if not found.
 func CheckClaudeCLI() error {
@@ -29,22 +25,25 @@ func CheckClaudeCLI() error {
 
 var rootCmd = &cobra.Command{
 	Use:   "alphie",
-	Short: "Agent Orchestrator & Learning Engine",
-	Long: `Alphie orchestrates parallel Claude Code agents on workstreams,
-accumulates learnings, and manages tasks to maximize development throughput.
-
-With no arguments, launches interactive mode with a persistent TUI where you
-can type tasks and watch them execute in parallel.
+	Short: "Spec-Driven Development Orchestrator",
+	Long: `Alphie takes a specification and orchestrates parallel agents to implement it.
 
 Core capabilities:
-- Decomposes work into parallelizable tasks
-- Spawns isolated agents in git worktrees
-- Self-improves code via Ralph-loop (critique, improve, repeat)
-- Learns from failures and successes
-- Merges safely via session branches`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runInteractive()
-	},
+- Parses spec into dependency graph (DAG)
+- Spawns parallel agents in isolated git worktrees
+- Validates each task with 4-layer verification
+- Handles merge conflicts intelligently
+- Iterates until implementation matches spec exactly
+
+Available commands:
+  version    Show version information
+  implement  Implement a specification
+  audit      Audit implementation against spec
+  init       Initialize alphie in a project
+  cleanup    Clean up orphaned worktrees
+  help       Help about any command
+
+Use "alphie [command] --help" for more information about a command.`,
 }
 
 // Execute runs the root command
@@ -58,20 +57,10 @@ func init() {
 	// Set version for --version flag
 	rootCmd.Version = Version()
 
-	// Add flags for interactive mode
-	rootCmd.Flags().BoolVar(&interactiveResume, "resume", false, "Resume incomplete tasks from previous sessions")
-	rootCmd.Flags().BoolVar(&interactiveGreenfield, "greenfield", false, "Direct merge to main (skip session branches)")
-	rootCmd.Flags().BoolVar(&interactiveUseCLI, "cli", false, "Use Claude CLI subprocess instead of API")
-
 	// Add subcommands
-	rootCmd.AddCommand(initCmd)
-	rootCmd.AddCommand(runCmd)
-	rootCmd.AddCommand(statusCmd)
-	rootCmd.AddCommand(configCmd)
-	rootCmd.AddCommand(learnCmd)
-	rootCmd.AddCommand(cleanupCmd)
-	rootCmd.AddCommand(baselineCmd)
-	rootCmd.AddCommand(auditCmd)
-	rootCmd.AddCommand(implementCmd)
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(implementCmd)
+	rootCmd.AddCommand(auditCmd)
+	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(cleanupCmd)
 }

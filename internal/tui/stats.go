@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ShayCichocki/alphie/pkg/models"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // TokenTracker is an interface for tracking token usage.
@@ -130,14 +130,15 @@ func (s *StatsView) View() string {
 	b.WriteString(s.headerStyle.Render("Session Statistics"))
 	b.WriteString("\n")
 
+	// TODO: tier removed - show default value
 	// Tier
-	tier := "Unknown"
-	if s.session != nil {
-		tier = string(s.session.Tier)
-		if tier == "" {
-			tier = "Unknown"
-		}
-	}
+	tier := "Default"
+	// if s.session != nil {
+	// 	tier = string(s.session.Tier)
+	// 	if tier == "" {
+	// 		tier = "Unknown"
+	// 	}
+	// }
 	b.WriteString(s.renderRow("Tier:", s.tierStyle.Render(tier)))
 	b.WriteString("\n")
 

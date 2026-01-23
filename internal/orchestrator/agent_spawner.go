@@ -10,14 +10,12 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ShayCichocki/alphie/internal/agent"
-	"github.com/ShayCichocki/alphie/internal/learning"
 	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // SpawnOptions contains configuration for spawning an agent.
 type SpawnOptions struct {
-	Tier           models.Tier
-	Learnings      []*learning.Learning
+	Tier           interface{}
 	Baseline       *agent.Baseline
 	OnProgress     func(ProgressReport)
 	WorkersRunning int
@@ -110,7 +108,6 @@ func (s *DefaultAgentSpawner) Spawn(ctx context.Context, task *models.Task, opts
 
 		execOpts := &agent.ExecuteOptions{
 			AgentID:            agentModel.ID,
-			Learnings:          opts.Learnings,
 			EnableRalphLoop:    true,
 			EnableQualityGates: true,
 			Baseline:           opts.Baseline,

@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/ShayCichocki/alphie/internal/config"
-	"github.com/ShayCichocki/alphie/pkg/models"
 )
 
 // TimeoutAction represents the user's response to a timeout prompt.
@@ -33,15 +32,15 @@ type TimeoutEvent struct {
 // timerEntry holds the state for an active agent timer.
 type timerEntry struct {
 	timer     *time.Timer
-	tier      models.Tier
+	tierIgnored interface{}
 	startTime time.Time
 	eventChan chan TimeoutEvent
 }
 
 // TimeoutHandler manages soft timeouts for agents based on their tier.
 type TimeoutHandler struct {
-	tier     models.Tier
-	timeouts map[models.Tier]time.Duration
+	tierIgnored interface{}
+	timeouts map[interface{}]time.Duration
 	timers   map[string]*timerEntry // agentID -> timer entry
 	mu       sync.RWMutex
 
@@ -52,24 +51,19 @@ type TimeoutHandler struct {
 // NewTimeoutHandler creates a new TimeoutHandler with default timeouts.
 func NewTimeoutHandler() *TimeoutHandler {
 	return &TimeoutHandler{
-		timeouts: map[models.Tier]time.Duration{
-			models.TierScout:     5 * time.Minute,
-			models.TierBuilder:   15 * time.Minute,
-			models.TierArchitect: 30 * time.Minute,
+		timeouts: map[interface{}]time.Duration{
+			nil:     5 * time.Minute,
+			nil:   15 * time.Minute,
+			nil: 30 * time.Minute,
 		},
 		timers: make(map[string]*timerEntry),
 	}
 }
 
 // NewTimeoutHandlerFromConfig creates a TimeoutHandler from configuration.
+// Simplified - no tier-specific timeouts, uses defaults.
 func NewTimeoutHandlerFromConfig(cfg *config.Config) *TimeoutHandler {
-	h := NewTimeoutHandler()
-	if cfg != nil {
-		h.timeouts[models.TierScout] = cfg.Timeouts.Scout
-		h.timeouts[models.TierBuilder] = cfg.Timeouts.Builder
-		h.timeouts[models.TierArchitect] = cfg.Timeouts.Architect
-	}
-	return h
+	return NewTimeoutHandler()
 }
 
 // SetOnKill sets the callback invoked when a kill action is taken.
@@ -80,28 +74,25 @@ func (h *TimeoutHandler) SetOnKill(fn func(agentID string)) {
 }
 
 // GetTimeout returns the timeout duration for the given tier.
-func (h *TimeoutHandler) GetTimeout(tier models.Tier) time.Duration {
+func (h *TimeoutHandler) GetTimeout(tierIgnored interface{}) time.Duration {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	if timeout, ok := h.timeouts[tier]; ok {
-		return timeout
-	}
-	// Default to builder timeout for unknown tiers
-	return h.timeouts[models.TierBuilder]
+	// Always return builder timeout, ignoring tier
+	return h.timeouts[nil]
 }
 
 // SetTimeout updates the timeout duration for a given tier.
-func (h *TimeoutHandler) SetTimeout(tier models.Tier, timeout time.Duration) {
+func (h *TimeoutHandler) SetTimeout(tierIgnored interface{}, timeout time.Duration) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.timeouts[tier] = timeout
+	h.timeouts[tierIgnored] = timeout
 }
 
 // StartTimer starts a timeout timer for the given agent and tier.
 // Returns a channel that receives TimeoutEvent when the timer fires.
 // If a timer already exists for this agent, it is stopped and replaced.
-func (h *TimeoutHandler) StartTimer(agentID string, tier models.Tier) <-chan TimeoutEvent {
+func (h *TimeoutHandler) StartTimer(agentID string, tierIgnored interface{}) <-chan TimeoutEvent {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -111,10 +102,7 @@ func (h *TimeoutHandler) StartTimer(agentID string, tier models.Tier) <-chan Tim
 		close(entry.eventChan)
 	}
 
-	timeout := h.timeouts[tier]
-	if timeout == 0 {
-		timeout = h.timeouts[models.TierBuilder]
-	}
+	timeout := h.timeouts[nil]
 
 	eventChan := make(chan TimeoutEvent, 1)
 	startTime := time.Now()
@@ -138,10 +126,10 @@ func (h *TimeoutHandler) StartTimer(agentID string, tier models.Tier) <-chan Tim
 	})
 
 	h.timers[agentID] = &timerEntry{
-		timer:     timer,
-		tier:      tier,
-		startTime: startTime,
-		eventChan: eventChan,
+		timer:       timer,
+		tierIgnored: tierIgnored,
+		startTime:   startTime,
+		eventChan:   eventChan,
 	}
 
 	return eventChan
@@ -174,7 +162,7 @@ func (h *TimeoutHandler) ExtendTimer(agentID string, extension time.Duration) {
 	entry.timer.Stop()
 
 	// Calculate remaining time by resetting with extended duration
-	timeout := h.timeouts[entry.tier] + extension
+	timeout := h.timeouts[nil] + extension
 
 	entry.timer = time.AfterFunc(extension, func() {
 		h.mu.RLock()
@@ -227,7 +215,7 @@ func (h *TimeoutHandler) HandleTimeout(agentID string, action TimeoutAction) {
 
 	case TimeoutActionExtend:
 		// Add 50% more time
-		timeout := h.timeouts[entry.tier]
+		timeout := h.timeouts[nil]
 		extension := timeout / 2
 		h.mu.Unlock()
 
@@ -236,12 +224,12 @@ func (h *TimeoutHandler) HandleTimeout(agentID string, action TimeoutAction) {
 
 	case TimeoutActionContinue:
 		// Restart with original timeout
-		tier := entry.tier
+		tierIgnored := entry.tierIgnored
 		h.mu.Unlock()
 
 		// Stop and restart the timer
 		h.StopTimer(agentID)
-		h.StartTimer(agentID, tier)
+		h.StartTimer(agentID, tierIgnored)
 		return
 	}
 
