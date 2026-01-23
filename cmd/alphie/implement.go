@@ -12,6 +12,7 @@ import (
 
 	"github.com/ShayCichocki/alphie/internal/agent"
 	"github.com/ShayCichocki/alphie/internal/architect"
+	"github.com/ShayCichocki/alphie/internal/finalverify"
 	"github.com/ShayCichocki/alphie/internal/orchestrator"
 	"github.com/ShayCichocki/alphie/internal/tui"
 	"github.com/spf13/cobra"
@@ -265,19 +266,26 @@ func runImplementationLoop(ctx context.Context, cfg implementConfig, tuiProgram 
 				Message:          "Running final verification...",
 			})
 
-			finalVerified, verifyErr := runFinalVerification(ctx, cfg, spec, gapReport)
+			// Read spec text for final verification
+			specTextBytes, err := os.ReadFile(cfg.specPath)
+			if err != nil {
+				return fmt.Errorf("read spec file for verification: %w", err)
+			}
+			specText := string(specTextBytes)
+
+			verifyResult, verifyErr := runFinalVerification(ctx, cfg, spec, specText)
 			if verifyErr != nil {
 				return fmt.Errorf("final verification error: %w", verifyErr)
 			}
 
-			if finalVerified {
+			if verifyResult.AllPassed {
 				// Success! All features complete and verified
 				progressCallback(architect.ProgressEvent{
 					Phase:            architect.PhaseComplete,
 					Iteration:        iteration,
 					FeaturesComplete: totalFeatures,
 					FeaturesTotal:    totalFeatures,
-					Message:          "✓ Implementation complete! All features verified.",
+					Message:          fmt.Sprintf("✓ Implementation complete! %s", verifyResult.Summary),
 				})
 				return nil
 			}
@@ -289,7 +297,7 @@ func runImplementationLoop(ctx context.Context, cfg implementConfig, tuiProgram 
 				Iteration:        iteration,
 				FeaturesComplete: completedFeatures,
 				FeaturesTotal:    totalFeatures,
-				Message:          "Final verification failed - identifying gaps for retry...",
+				Message:          fmt.Sprintf("Final verification failed: %s", verifyResult.FailureReason),
 			})
 			iteration++
 			continue
@@ -336,98 +344,43 @@ func runImplementationLoop(ctx context.Context, cfg implementConfig, tuiProgram 
 	}
 }
 
-// runFinalVerification runs the 3-layer final verification:
+// mergeVerifierAdapter adapts orchestrator.MergeVerifier to finalverify.BuildTester interface.
+type mergeVerifierAdapter struct {
+	verifier *orchestrator.MergeVerifier
+}
+
+func (a *mergeVerifierAdapter) RunBuildAndTests(ctx context.Context, repoPath string) (bool, string, error) {
+	result, err := a.verifier.VerifyMerge(ctx, "current")
+	if err != nil {
+		return false, "", err
+	}
+	return result.Passed, result.Output, nil
+}
+
+// runFinalVerification runs the 3-layer final verification using the finalverify package:
 // 1. Architecture audit (must be 100% COMPLETE)
 // 2. Build + test suite (must pass)
 // 3. Comprehensive semantic review (must pass)
-func runFinalVerification(ctx context.Context, cfg implementConfig, spec *architect.ArchSpec, gapReport *architect.GapReport) (bool, error) {
-	// Layer 1: Architecture Audit (already have this from gapReport)
-	// All features must be COMPLETE
-	for _, fs := range gapReport.Features {
-		if fs.Status != architect.AuditStatusComplete {
-			return false, nil // Found incomplete/partial/missing feature
-		}
-	}
+func runFinalVerification(ctx context.Context, cfg implementConfig, spec *architect.ArchSpec, specText string) (*finalverify.VerificationResult, error) {
+	// Create auditor
+	auditor := architect.NewAuditor()
 
-	// Layer 2: Build + Test Suite
-	// Use the merge verifier's build test logic
+	// Create build tester adapter
 	projectInfo := orchestrator.GetProjectTypeInfo(cfg.repoPath)
-	verifier := orchestrator.NewMergeVerifier(cfg.repoPath, projectInfo, 5*time.Minute)
-	verifyResult, verifyErr := verifier.VerifyMerge(ctx, "current")
-	if verifyErr != nil {
-		return false, fmt.Errorf("build verification error: %w", verifyErr)
-	}
-	if !verifyResult.Passed {
-		fmt.Printf("Build/test failed:\n%s\n", verifyResult.Output)
-		return false, nil
-	}
+	mergeVerifier := orchestrator.NewMergeVerifier(cfg.repoPath, projectInfo, 5*time.Minute)
+	buildTester := &mergeVerifierAdapter{verifier: mergeVerifier}
 
-	// Layer 3: Comprehensive Semantic Review
-	// Use Claude to review entire implementation against spec
-	reviewPassed, err := runComprehensiveSemanticReview(ctx, cfg, spec)
-	if err != nil {
-		return false, fmt.Errorf("semantic review error: %w", err)
-	}
-	if !reviewPassed {
-		return false, nil
-	}
+	// Create final verifier
+	verifier := finalverify.NewFinalVerifier(auditor, buildTester, cfg.runnerFactory)
 
-	// All 3 layers passed!
-	return true, nil
-}
+	// Run verification
+	result, err := verifier.Verify(ctx, finalverify.VerificationInput{
+		RepoPath: cfg.repoPath,
+		Spec:     spec,
+		SpecText: specText,
+	})
 
-// runComprehensiveSemanticReview performs a comprehensive review of the entire
-// implementation against the full spec.
-func runComprehensiveSemanticReview(ctx context.Context, cfg implementConfig, spec *architect.ArchSpec) (bool, error) {
-	// Build comprehensive review prompt
-	var sb strings.Builder
-	sb.WriteString("# Comprehensive Implementation Review\n\n")
-	sb.WriteString("You are performing a final comprehensive review of an entire implementation ")
-	sb.WriteString("against its architecture specification.\n\n")
-
-	sb.WriteString("## Architecture Specification\n\n")
-	sb.WriteString(fmt.Sprintf("**System**: %s\n\n", spec.Name))
-	sb.WriteString(fmt.Sprintf("**Features** (%d total):\n", len(spec.Features)))
-	for i, feat := range spec.Features {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, feat.Name))
-		if feat.Description != "" {
-			sb.WriteString(fmt.Sprintf("   %s\n", feat.Description))
-		}
-		if feat.Criteria != "" {
-			sb.WriteString(fmt.Sprintf("   Criteria: %s\n", feat.Criteria))
-		}
-		sb.WriteString("\n")
-	}
-
-	sb.WriteString("## Your Task\n\n")
-	sb.WriteString("Review the codebase at the given repository path and determine:\n")
-	sb.WriteString("1. Are ALL features fully implemented?\n")
-	sb.WriteString("2. Does each implementation match its acceptance criteria?\n")
-	sb.WriteString("3. Are there any gaps, partial implementations, or incorrect approaches?\n")
-	sb.WriteString("4. Is the overall implementation complete and production-ready?\n\n")
-
-	sb.WriteString("## Response Format\n\n")
-	sb.WriteString("VERDICT: [PASS/FAIL]\n")
-	sb.WriteString("REASONING: [Explain your verdict in 2-3 sentences]\n")
-	sb.WriteString("GAPS: [List any gaps or issues found, or 'None']\n\n")
-
-	sb.WriteString("Be strict: PASS only if the implementation is truly 100% complete and correct. ")
-	sb.WriteString("FAIL if ANY feature is incomplete, partial, or doesn't match the spec.\n")
-
-	prompt := sb.String()
-
-	// Note: This is a placeholder for the full implementation
-	// In production, this would use a ClaudeRunner to perform the review
-	// For now, we'll return true (pass) as semantic review integration
-	// requires more work on the Claude invocation side
-	_ = prompt // Use prompt to avoid unused warning
-
-	// TODO: Implement proper Claude-based semantic review
-	// This requires either:
-	// 1. Using agent.Executor to run a one-off review task, or
-	// 2. Adding a synchronous "Ask" method to ClaudeRunner
-	// For now, we trust the audit and build/test layers
-	return true, nil
+	return result, err
 }
 
 // createOrchestrator creates an orchestrator instance for the current iteration.

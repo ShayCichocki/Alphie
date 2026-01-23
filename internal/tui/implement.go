@@ -434,3 +434,13 @@ func NewImplementProgram() (*tea.Program, *ImplementApp) {
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	return p, app
 }
+
+// TODO: Escalation UI Support
+// The escalation handler is fully integrated into the orchestrator and emits
+// EventTaskEscalation events. To complete the TUI integration:
+// 1. Add escalation fields to ImplementState (isEscalating bool, escalationTask, etc.)
+// 2. Handle EventTaskEscalation in the main TUI update loop
+// 3. Display escalation prompt with options when escalating
+// 4. Capture user keypress (r=retry, s=skip, a=abort, m=manual)
+// 5. Send response back to orchestrator via RespondToEscalation()
+// For now, escalation works but requires CLI/API interaction rather than TUI prompts.

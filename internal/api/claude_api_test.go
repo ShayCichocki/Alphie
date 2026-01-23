@@ -237,9 +237,7 @@ func TestClaudeAPIConfig_Defaults(t *testing.T) {
 	api := NewClaudeAPI(cfg)
 
 	// Should use defaults
-	if api.model != anthropic.ModelClaudeSonnet4_20250514 {
-		t.Errorf("Default model = %q, want Sonnet", api.model)
-	}
+	// Model comes from client, so just check maxIterations default
 	if api.maxIterations != 50 {
 		t.Errorf("Default maxIterations = %d, want 50", api.maxIterations)
 	}

@@ -162,9 +162,38 @@ func (r *CodeReviewer) buildReviewPrompt(input CodeReviewInput) string {
 
 // invokeClaudeForReview sends the prompt to Claude and returns the response.
 func (r *CodeReviewer) invokeClaudeForReview(ctx context.Context, runner agent.ClaudeRunner, prompt string) (string, error) {
-	// TODO: Implement proper Claude invocation
-	// This requires integration with agent.Executor or ClaudeRunner
-	return "", fmt.Errorf("Claude invocation not yet implemented - requires agent.Executor integration")
+	// Start Claude with Sonnet model for code review
+	opts := &agent.StartOptions{Model: agent.ModelSonnet}
+	if err := runner.StartWithOptions(prompt, "/tmp", opts); err != nil {
+		return "", fmt.Errorf("start claude for review: %w", err)
+	}
+
+	// Collect the response
+	var response strings.Builder
+	for event := range runner.Output() {
+		select {
+		case <-ctx.Done():
+			_ = runner.Kill()
+			return "", ctx.Err()
+		default:
+		}
+
+		switch event.Type {
+		case agent.StreamEventResult:
+			response.WriteString(event.Message)
+		case agent.StreamEventAssistant:
+			response.WriteString(event.Message)
+		case agent.StreamEventError:
+			return "", fmt.Errorf("claude review error: %s", event.Error)
+		}
+	}
+
+	// Wait for completion
+	if err := runner.Wait(); err != nil {
+		return "", fmt.Errorf("wait for claude review: %w", err)
+	}
+
+	return response.String(), nil
 }
 
 // parseReviewResponse parses Claude's response into a structured result.

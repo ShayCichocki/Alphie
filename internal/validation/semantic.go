@@ -133,18 +133,39 @@ func (v *SemanticValidator) buildValidationPrompt(input SemanticValidationInput)
 }
 
 // invokeClaudeForValidation sends the prompt to Claude and returns the response.
-// This is a simplified implementation - in production, this would use the full
-// agent.ClaudeRunner interface properly.
 func (v *SemanticValidator) invokeClaudeForValidation(ctx context.Context, runner agent.ClaudeRunner, prompt string) (string, error) {
-	// For now, return a placeholder
-	// In full implementation, this would:
-	// 1. Start the runner with the prompt
-	// 2. Wait for completion
-	// 3. Return the response
+	// Start Claude with Sonnet model for validation
+	opts := &agent.StartOptions{Model: agent.ModelSonnet}
+	if err := runner.StartWithOptions(prompt, "/tmp", opts); err != nil {
+		return "", fmt.Errorf("start claude for validation: %w", err)
+	}
 
-	// TODO: Implement proper Claude invocation
-	// This requires adding a method to ClaudeRunner or using agent.Executor
-	return "", fmt.Errorf("Claude invocation not yet implemented - requires agent.Executor integration")
+	// Collect the response
+	var response strings.Builder
+	for event := range runner.Output() {
+		select {
+		case <-ctx.Done():
+			_ = runner.Kill()
+			return "", ctx.Err()
+		default:
+		}
+
+		switch event.Type {
+		case agent.StreamEventResult:
+			response.WriteString(event.Message)
+		case agent.StreamEventAssistant:
+			response.WriteString(event.Message)
+		case agent.StreamEventError:
+			return "", fmt.Errorf("claude validation error: %s", event.Error)
+		}
+	}
+
+	// Wait for completion
+	if err := runner.Wait(); err != nil {
+		return "", fmt.Errorf("wait for claude validation: %w", err)
+	}
+
+	return response.String(), nil
 }
 
 // parseValidationResponse parses Claude's response into a structured result.
