@@ -25,6 +25,8 @@ type TaskOutcome struct {
 	Duration time.Duration
 	// MergeResult contains merge outcome if applicable.
 	MergeResult *MergeOutcome
+	// Metadata contains additional outcome-specific data.
+	Metadata map[string]interface{}
 }
 
 // OutcomeStatus represents the final status of a task.
@@ -41,6 +43,8 @@ const (
 	OutcomeMergeFailed
 	// OutcomeCancelled indicates the task was cancelled by user/system.
 	OutcomeCancelled
+	// OutcomeEscalation indicates the task needed user escalation and was handled.
+	OutcomeEscalation
 )
 
 // String returns a human-readable status name.
@@ -56,6 +60,8 @@ func (s OutcomeStatus) String() string {
 		return "merge_failed"
 	case OutcomeCancelled:
 		return "cancelled"
+	case OutcomeEscalation:
+		return "escalation"
 	default:
 		return "unknown"
 	}

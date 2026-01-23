@@ -116,11 +116,12 @@ type Orchestrator struct {
 	logger        *DebugLogger
 
 	// Runtime state
-	emitter   *EventEmitter
-	stopCh    chan struct{}
-	wg        sync.WaitGroup
-	registry  *AgentRegistry
-	pauseCtrl *PauseController
+	emitter          *EventEmitter
+	stopCh           chan struct{}
+	wg               sync.WaitGroup
+	registry         *AgentRegistry
+	pauseCtrl        *PauseController
+	escalationHdlr   *EscalationHandler
 
 	// Merge conflict blocking state
 	mergeConflictMu      sync.RWMutex
@@ -351,6 +352,9 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 		registry:          NewAgentRegistry(),
 		pauseCtrl:         NewPauseController(),
 	}
+
+	// Create escalation handler with reference to orchestrator
+	o.escalationHdlr = NewEscalationHandler(o)
 
 	// TODO: learning system removed - reinstate if needed
 	// Initialize effectiveness tracker if learning system is available

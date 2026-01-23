@@ -42,6 +42,11 @@ func (o *Orchestrator) handleTaskCompletion(ctx context.Context, taskID string, 
 	// Check for clean abort condition: max iterations reached without passing verification
 	// This means the task failed to meet quality standards after all attempts
 	if result.Success && strings.Contains(result.LoopExitReason, "max_iterations_reached") && !result.IsVerified() {
+		// Check if escalation is needed
+		if o.escalationHdlr != nil && o.escalationHdlr.NeedsEscalation(task, result) {
+			return o.handleTaskEscalation(ctx, task, result, startTime)
+		}
+
 		o.handleAbortedTask(task, result)
 		return &TaskOutcome{
 			Status:   OutcomeAborted,
@@ -76,6 +81,11 @@ func (o *Orchestrator) handleTaskCompletion(ctx context.Context, taskID string, 
 		}
 	}
 
+	// Check if escalation is needed for failed tasks
+	if o.escalationHdlr != nil && o.escalationHdlr.NeedsEscalation(task, result) {
+		return o.handleTaskEscalation(ctx, task, result, startTime)
+	}
+
 	o.handleFailedTask(task, result)
 	return &TaskOutcome{
 		Status:   OutcomeFailed,
@@ -84,6 +94,64 @@ func (o *Orchestrator) handleTaskCompletion(ctx context.Context, taskID string, 
 		Result:   result,
 		Error:    fmt.Errorf("%s", result.Error),
 		Duration: time.Since(startTime),
+	}
+}
+
+// handleTaskEscalation handles a task that needs user escalation.
+func (o *Orchestrator) handleTaskEscalation(ctx context.Context, task *models.Task, result *agent.ExecutionResult, startTime time.Time) *TaskOutcome {
+	o.logger.Log("[handleTaskEscalation] task %s needs escalation after %d attempts", task.ID, task.ExecutionCount)
+
+	// Build escalation request
+	req := &EscalationRequest{
+		Task:              task,
+		Result:            result,
+		Attempts:          task.ExecutionCount,
+		FailureReason:     result.Error,
+		ValidationSummary: result.VerifySummary,
+		WorktreePath:      result.WorktreePath,
+	}
+
+	// Request escalation (this blocks until user responds)
+	response, err := o.escalationHdlr.RequestEscalation(ctx, req)
+	if err != nil {
+		o.logger.Log("[handleTaskEscalation] escalation error: %v", err)
+		// On error, mark as failed
+		return &TaskOutcome{
+			Status:   OutcomeFailed,
+			TaskID:   task.ID,
+			AgentID:  result.AgentID,
+			Result:   result,
+			Error:    fmt.Errorf("escalation failed: %w", err),
+			Duration: time.Since(startTime),
+		}
+	}
+
+	// Handle user's chosen action
+	actionErr := o.escalationHdlr.HandleEscalationAction(ctx, task, result, response.Action)
+	if actionErr != nil && response.Action == EscalationAbort {
+		// Abort action should stop execution
+		return &TaskOutcome{
+			Status:   OutcomeAborted,
+			TaskID:   task.ID,
+			AgentID:  result.AgentID,
+			Result:   result,
+			Error:    actionErr,
+			Duration: time.Since(startTime),
+		}
+	}
+
+	// For other actions (retry, skip, manual), return escalation outcome
+	return &TaskOutcome{
+		Status:   OutcomeEscalation,
+		TaskID:   task.ID,
+		AgentID:  result.AgentID,
+		Result:   result,
+		Error:    nil, // No error - handled by user
+		Duration: time.Since(startTime),
+		Metadata: map[string]interface{}{
+			"escalation_action":  response.Action,
+			"escalation_message": response.Message,
+		},
 	}
 }
 

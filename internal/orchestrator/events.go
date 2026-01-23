@@ -33,6 +33,16 @@ const (
 	EventAgentProgress EventType = "agent_progress"
 	// EventEpicCreated indicates a new epic has been created to track subtasks.
 	EventEpicCreated EventType = "epic_created"
+	// EventTaskEscalation indicates a task needs user escalation after max retries.
+	EventTaskEscalation EventType = "task_escalation"
+	// EventTaskRetry indicates a task will be retried after user escalation.
+	EventTaskRetry EventType = "task_retry"
+	// EventTaskSkipped indicates a task was skipped by user during escalation.
+	EventTaskSkipped EventType = "task_skipped"
+	// EventAbort indicates the user aborted execution during escalation.
+	EventAbort EventType = "abort"
+	// EventManualFixRequired indicates user must manually fix code in worktree.
+	EventManualFixRequired EventType = "manual_fix_required"
 )
 
 // OrchestratorEvent represents an event emitted by the orchestrator.
@@ -70,4 +80,6 @@ type OrchestratorEvent struct {
 	WorkersRunning int
 	// WorkersBlocked is the number of tasks blocked by dependencies or collisions.
 	WorkersBlocked int
+	// Metadata contains additional event-specific data.
+	Metadata map[string]interface{}
 }
