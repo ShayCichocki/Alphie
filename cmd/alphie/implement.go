@@ -178,11 +178,9 @@ func runImplementationLoop(ctx context.Context, cfg implementConfig, tuiProgram 
 		tuiProgram.Send(tui.ImplementUpdateMsg{
 			State: tui.ImplementState{
 				Iteration:        event.Iteration,
-				MaxIterations:    0, // No max iterations - iterate until complete
 				FeaturesComplete: event.FeaturesComplete,
 				FeaturesTotal:    event.FeaturesTotal,
 				Cost:             event.Cost,
-				CostBudget:       0, // No budget limit - iterate until complete
 				CurrentPhase:     phaseStr,
 				WorkersRunning:   event.WorkersRunning,
 				WorkersBlocked:   event.WorkersBlocked,

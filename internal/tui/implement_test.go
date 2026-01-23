@@ -19,9 +19,6 @@ func TestImplementState_ZeroValue(t *testing.T) {
 	if state.Iteration != 0 {
 		t.Errorf("expected Iteration=0, got %d", state.Iteration)
 	}
-	if state.MaxIterations != 0 {
-		t.Errorf("expected MaxIterations=0, got %d", state.MaxIterations)
-	}
 	if state.FeaturesComplete != 0 {
 		t.Errorf("expected FeaturesComplete=0, got %d", state.FeaturesComplete)
 	}
@@ -31,9 +28,6 @@ func TestImplementState_ZeroValue(t *testing.T) {
 	if state.Cost != 0 {
 		t.Errorf("expected Cost=0, got %f", state.Cost)
 	}
-	if state.CostBudget != 0 {
-		t.Errorf("expected CostBudget=0, got %f", state.CostBudget)
-	}
 	if state.CurrentPhase != "" {
 		t.Errorf("expected CurrentPhase='', got %q", state.CurrentPhase)
 	}
@@ -42,15 +36,13 @@ func TestImplementState_ZeroValue(t *testing.T) {
 func TestImplementState_WithValues(t *testing.T) {
 	state := ImplementState{
 		Iteration:        3,
-		MaxIterations:    10,
 		FeaturesComplete: 5,
 		FeaturesTotal:    12,
 		Cost:             1.50,
-		CostBudget:       10.00,
 		CurrentPhase:     "executing",
 		WorkersRunning:   2,
 		WorkersBlocked:   1,
-		StopConditions:   []string{"max iterations"},
+		StopConditions:   []string{"escalation needed"},
 		BlockedQuestions: []string{"What database to use?"},
 	}
 
@@ -79,13 +71,13 @@ func TestNewImplementView(t *testing.T) {
 		t.Fatal("NewImplementView returned nil")
 	}
 
-	// Check default state values
+	// Check that state is initialized (with zero values)
 	state := view.GetState()
-	if state.MaxIterations != 10 {
-		t.Errorf("expected default MaxIterations=10, got %d", state.MaxIterations)
+	if state.Iteration != 0 {
+		t.Errorf("expected default Iteration=0, got %d", state.Iteration)
 	}
-	if state.CostBudget != 50.00 {
-		t.Errorf("expected default CostBudget=50.00, got %f", state.CostBudget)
+	if state.Cost != 0 {
+		t.Errorf("expected default Cost=0, got %f", state.Cost)
 	}
 }
 
@@ -94,7 +86,6 @@ func TestImplementView_SetState(t *testing.T) {
 
 	newState := ImplementState{
 		Iteration:        5,
-		MaxIterations:    20,
 		FeaturesComplete: 8,
 		FeaturesTotal:    16,
 		CurrentPhase:     "auditing",
@@ -105,9 +96,6 @@ func TestImplementView_SetState(t *testing.T) {
 
 	if got.Iteration != 5 {
 		t.Errorf("expected Iteration=5, got %d", got.Iteration)
-	}
-	if got.MaxIterations != 20 {
-		t.Errorf("expected MaxIterations=20, got %d", got.MaxIterations)
 	}
 	if got.FeaturesComplete != 8 {
 		t.Errorf("expected FeaturesComplete=8, got %d", got.FeaturesComplete)
@@ -168,11 +156,9 @@ func TestImplementView_View_ContainsExpectedElements(t *testing.T) {
 	view := NewImplementView()
 	view.SetState(ImplementState{
 		Iteration:        2,
-		MaxIterations:    10,
 		FeaturesComplete: 3,
 		FeaturesTotal:    6,
 		Cost:             0.50,
-		CostBudget:       5.00,
 		CurrentPhase:     "parsing",
 		WorkersRunning:   1,
 		WorkersBlocked:   0,
@@ -183,7 +169,6 @@ func TestImplementView_View_ContainsExpectedElements(t *testing.T) {
 	// Check for key content (note: output includes ANSI codes, so use Contains)
 	expectedStrings := []string{
 		"Implementation Progress",
-		"2/10",    // Iteration
 		"3/6",     // Features
 		"50%",     // Percentage (3/6 = 50%)
 		"$0.50",   // Cost
@@ -251,30 +236,6 @@ func TestImplementView_View_StopConditions(t *testing.T) {
 	}
 }
 
-func TestImplementView_View_CostWarningAt90Percent(t *testing.T) {
-	view := NewImplementView()
-
-	// Under 90% - no warning style applied (we can't easily check style, but logic test)
-	view.SetState(ImplementState{
-		Cost:       4.00,
-		CostBudget: 5.00, // 80%
-	})
-	_ = view.View() // Should not panic
-
-	// At 90% - warning style should be applied
-	view.SetState(ImplementState{
-		Cost:       4.50,
-		CostBudget: 5.00, // 90%
-	})
-	_ = view.View() // Should not panic
-
-	// Over 90%
-	view.SetState(ImplementState{
-		Cost:       4.75,
-		CostBudget: 5.00, // 95%
-	})
-	_ = view.View() // Should not panic
-}
 
 // =============================================================================
 // Progress Bar Tests
@@ -569,7 +530,6 @@ func TestImplementApp_View_Normal(t *testing.T) {
 	app := NewImplementApp()
 	app.view.SetState(ImplementState{
 		Iteration:        1,
-		MaxIterations:    10,
 		FeaturesComplete: 2,
 		FeaturesTotal:    8,
 		CurrentPhase:     "auditing",
@@ -579,7 +539,6 @@ func TestImplementApp_View_Normal(t *testing.T) {
 
 	expectedStrings := []string{
 		"Alphie Implement",
-		"1/10",
 		"2/8",
 		"auditing",
 		"Press q to cancel",
@@ -784,7 +743,6 @@ func TestImplementApp_FullWorkflow(t *testing.T) {
 		model, _ = app.Update(ImplementUpdateMsg{
 			State: ImplementState{
 				Iteration:        1,
-				MaxIterations:    10,
 				FeaturesComplete: i * 2,
 				FeaturesTotal:    10,
 				CurrentPhase:     phase,

@@ -30,25 +30,10 @@ func CheckClaudeCLI() error {
 
 var rootCmd = &cobra.Command{
 	Use:   "alphie",
-	Short: "Spec-Driven Development Orchestrator",
-	Long: `Alphie takes a specification and orchestrates parallel agents to implement it.
-
-Core capabilities:
-- Parses spec into dependency graph (DAG)
-- Spawns parallel agents in isolated git worktrees
-- Validates each task with 4-layer verification
-- Handles merge conflicts intelligently
-- Iterates until implementation matches spec exactly
-
-Available commands:
-  version    Show version information
-  implement  Implement a specification
-  audit      Audit implementation against spec
-  init       Initialize alphie in a project
-  cleanup    Clean up orphaned worktrees
-  help       Help about any command
-
-Use "alphie [command] --help" for more information about a command.`,
+	Short: "Spec-driven development orchestrator",
+	CompletionOptions: cobra.CompletionOptions{
+		DisableDefaultCmd: true, // Disable auto-generated completion command
+	},
 }
 
 // Execute runs the root command

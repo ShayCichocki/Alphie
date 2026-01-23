@@ -12,12 +12,10 @@ import (
 
 // ImplementState tracks the current implementation progress.
 type ImplementState struct {
-	Iteration        int
-	MaxIterations    int
+	Iteration        int     // Current iteration number (no max - iterate until complete)
 	FeaturesComplete int
 	FeaturesTotal    int
-	Cost             float64
-	CostBudget       float64
+	Cost             float64 // Total cost so far (no budget limit)
 	CurrentPhase     string
 	WorkersRunning   int
 	WorkersBlocked   int
@@ -61,10 +59,7 @@ type ImplementView struct {
 // NewImplementView creates a new ImplementView instance.
 func NewImplementView() *ImplementView {
 	return &ImplementView{
-		state: ImplementState{
-			MaxIterations: 10,
-			CostBudget:    50.00,
-		},
+		state: ImplementState{},
 
 		headerStyle: lipgloss.NewStyle().
 			Bold(true).
@@ -123,18 +118,14 @@ func (v *ImplementView) View() string {
 	b.WriteString(v.headerStyle.Render("Implementation Progress"))
 	b.WriteString("\n")
 
-	// Iteration and Cost on same line
-	iterStr := fmt.Sprintf("%d/%d", v.state.Iteration, v.state.MaxIterations)
-	costStr := fmt.Sprintf("$%.2f/$%.2f", v.state.Cost, v.state.CostBudget)
+	// Iteration and Cost on same line (no limits - iterate until complete)
+	iterStr := fmt.Sprintf("%d", v.state.Iteration)
+	costStr := fmt.Sprintf("$%.2f", v.state.Cost)
 	b.WriteString(v.labelStyle.Render("Iteration:"))
 	b.WriteString(v.valueStyle.Render(iterStr))
 	b.WriteString("  ")
 	b.WriteString(v.labelStyle.Render("Cost:"))
-	costStyle := v.valueStyle
-	if v.state.CostBudget > 0 && v.state.Cost/v.state.CostBudget > 0.9 {
-		costStyle = v.warningStyle
-	}
-	b.WriteString(costStyle.Render(costStr))
+	b.WriteString(v.valueStyle.Render(costStr))
 	b.WriteString("\n")
 
 	// Features completed/remaining

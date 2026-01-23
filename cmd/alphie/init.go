@@ -15,7 +15,6 @@ var (
 	initForce          bool
 	initNoGit          bool
 	initProjectName    string
-	initWithConfigs    bool
 	initSkipClaudeCheck bool
 )
 
@@ -28,7 +27,7 @@ This command sets up everything needed to run Alphie:
   - Verifies prerequisites (git, claude CLI)
   - Initializes git repository if needed
   - Creates .alphie directory structure
-  - Optionally creates example configuration files
+  - Sets up .gitignore with Alphie entries
 
 The directory argument is optional and defaults to the current directory.
 
@@ -36,8 +35,7 @@ Examples:
   alphie init              # Initialize current directory
   alphie init ./myproject  # Initialize specific directory
   alphie init --force      # Reinitialize even if already set up
-  alphie init --no-git     # Skip git initialization
-  alphie init --with-configs  # Create example tier config files`,
+  alphie init --no-git     # Skip git initialization`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runInit,
 }
@@ -46,7 +44,6 @@ func init() {
 	initCmd.Flags().BoolVar(&initForce, "force", false, "Reinitialize even if already set up")
 	initCmd.Flags().BoolVar(&initNoGit, "no-git", false, "Skip git initialization")
 	initCmd.Flags().StringVar(&initProjectName, "project-name", "", "Override auto-detected project name")
-	initCmd.Flags().BoolVar(&initWithConfigs, "with-configs", false, "Create example tier configuration files")
 	initCmd.Flags().BoolVar(&initSkipClaudeCheck, "skip-claude-check", false, "Skip Claude CLI availability check")
 }
 
@@ -134,20 +131,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		printStatus("✓", "Updated .gitignore with Alphie entries", color.FgGreen)
 	}
 
-	// Step 7: Create config files (if --with-configs)
-	if initWithConfigs {
-		if err := createExampleConfigs(absPath); err != nil {
-			return fmt.Errorf("creating example configs: %w", err)
-		}
-		printStatus("✓", "Created example tier configurations in configs/", color.FgGreen)
-
-		if err := createProjectConfig(absPath); err != nil {
-			return fmt.Errorf("creating project config: %w", err)
-		}
-		printStatus("✓", "Created .alphie.yaml template", color.FgGreen)
-	}
-
-	// Step 8: Success message
+	// Step 7: Success message
 	projectName := initProjectName
 	if projectName == "" {
 		projectName = detectProjectName(absPath)
@@ -167,11 +151,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Println("     export ANTHROPIC_API_KEY=your-key-here")
 		fmt.Println()
 	}
-	fmt.Println("  2. Run Alphie:")
-	fmt.Println("     alphie run \"your task here\"")
-	fmt.Println("     # or: alphie (for interactive mode)")
+	fmt.Println("  2. Create a specification:")
+	fmt.Println("     # Create docs/spec.md with your architecture requirements")
 	fmt.Println()
-	fmt.Println("  3. Learn more:")
+	fmt.Println("  3. Run Alphie:")
+	fmt.Println("     alphie implement docs/spec.md")
+	fmt.Println()
+	fmt.Println("  4. Learn more:")
 	fmt.Println("     alphie --help")
 	fmt.Println()
 	fmt.Println("Project details:")
@@ -373,46 +359,6 @@ func updateGitignore(repoPath string) error {
 	}
 
 	return os.WriteFile(gitignorePath, []byte(newContent.String()), 0644)
-}
-
-// createExampleConfigs creates example configuration files
-// Note: Tier configs have been removed as part of simplification.
-// This function is kept for future config file examples.
-func createExampleConfigs(repoPath string) error {
-	// Tier configs removed - no longer needed
-	// This function is kept as a placeholder for future config examples
-	return nil
-}
-
-// createProjectConfig creates .alphie.yaml template
-func createProjectConfig(repoPath string) error {
-	configPath := filepath.Join(repoPath, ".alphie.yaml")
-
-	// Check if already exists
-	if _, err := os.Stat(configPath); err == nil {
-		return nil // Already exists, don't overwrite
-	}
-
-	template := `# Alphie Project Configuration
-# This file overrides defaults from ~/.config/alphie/config.yaml
-
-# defaults:
-#   tier: builder
-#   token_budget: 100000
-
-# quality_gates:
-#   test: true
-#   build: true
-#   lint: true
-#   typecheck: true
-
-# timeouts:
-#   scout: 5m
-#   builder: 15m
-#   architect: 30m
-`
-
-	return os.WriteFile(configPath, []byte(template), 0644)
 }
 
 // detectProjectName detects project name from directory
