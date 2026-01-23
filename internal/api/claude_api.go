@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )
@@ -60,15 +62,13 @@ type ClaudeAPIConfig struct {
 
 // NewClaudeAPI creates a new API-based Claude runner.
 func NewClaudeAPI(cfg ClaudeAPIConfig) *ClaudeAPI {
-	model := cfg.Model
-	if model == "" {
-		model = anthropic.ModelClaudeSonnet4_20250514
-	}
-
 	maxIter := cfg.MaxIterations
 	if maxIter == 0 {
 		maxIter = 50
 	}
+
+	// Use the client's model which has already been translated for Bedrock
+	model := cfg.Client.Model()
 
 	return &ClaudeAPI{
 		client:        cfg.Client,
@@ -112,7 +112,8 @@ func (c *ClaudeAPI) StartWithOptions(prompt, workDir string, opts *StartOptionsA
 	// Override model if specified
 	model := c.model
 	if opts != nil && opts.Model != "" {
-		model = anthropic.Model(opts.Model)
+		// Translate the model for Bedrock if needed
+		model = c.client.TranslateModel(anthropic.Model(opts.Model))
 	}
 
 	// Override temperature if specified
@@ -182,6 +183,15 @@ func (c *ClaudeAPI) runLoop(prompt string, model anthropic.Model) {
 
 		resp, err := c.client.sdk().Messages.New(c.ctx, params)
 		if err != nil {
+			// Debug: Write full error to file
+			if debugFile, ferr := os.OpenFile("/tmp/alphie-api-error.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); ferr == nil {
+				fmt.Fprintf(debugFile, "[%s] API Error:\n", time.Now().Format(time.RFC3339))
+				fmt.Fprintf(debugFile, "  Error: %v\n", err)
+				fmt.Fprintf(debugFile, "  Type: %T\n", err)
+				fmt.Fprintf(debugFile, "  Model: %s\n", model)
+				fmt.Fprintf(debugFile, "\n")
+				debugFile.Close()
+			}
 			c.emitError(fmt.Sprintf("API error: %v", err))
 			return
 		}

@@ -23,6 +23,16 @@ type ImplementState struct {
 	WorkersBlocked   int
 	StopConditions   []string
 	BlockedQuestions []string
+	// ActiveWorkers maps agent ID -> task info for debugging
+	ActiveWorkers map[string]WorkerInfo
+}
+
+// WorkerInfo contains information about an active worker for display.
+type WorkerInfo struct {
+	AgentID   string
+	TaskID    string
+	TaskTitle string
+	Status    string // "running", "blocked", etc.
 }
 
 // ImplementUpdateMsg is sent when implementation state changes.
@@ -158,6 +168,40 @@ func (v *ImplementView) View() string {
 	b.WriteString(v.labelStyle.Render("Workers:"))
 	b.WriteString(workersStr)
 	b.WriteString("\n")
+
+	// Show active workers with their IDs for debugging
+	if len(v.state.ActiveWorkers) > 0 {
+		b.WriteString("\n")
+		b.WriteString(v.labelStyle.Render("Active Workers:"))
+		b.WriteString("\n")
+		for _, worker := range v.state.ActiveWorkers {
+			agentShort := worker.AgentID
+			if len(agentShort) > 12 {
+				agentShort = agentShort[:12]
+			}
+			taskShort := worker.TaskID
+			if len(taskShort) > 8 {
+				taskShort = taskShort[:8]
+			}
+			title := worker.TaskTitle
+			if len(title) > 40 {
+				title = title[:37] + "..."
+			}
+
+			statusStyle := v.runningStyle
+			if worker.Status == "blocked" {
+				statusStyle = v.blockedStyle
+			}
+
+			workerLine := fmt.Sprintf("  %s  A:%s T:%s  %s",
+				statusStyle.Render(worker.Status),
+				agentShort,
+				taskShort,
+				title)
+			b.WriteString(workerLine)
+			b.WriteString("\n")
+		}
+	}
 
 	// Blocked questions (if any)
 	if len(v.state.BlockedQuestions) > 0 {

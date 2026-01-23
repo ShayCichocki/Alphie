@@ -90,6 +90,7 @@ func (s *DefaultAgentSpawner) Spawn(ctx context.Context, task *models.Task, opts
 	pathPrefixes := s.collision.ExtractPathPrefixes(task)
 	s.collision.RegisterAgent(agentModel.ID, pathPrefixes, nil)
 
+	log.Printf("[agent_spawner] EMITTING EventTaskStarted for task %s (agent %s)", task.ID, agentModel.ID)
 	s.emitEvent(OrchestratorEvent{
 		Type:           EventTaskStarted,
 		TaskID:         task.ID,
@@ -101,6 +102,7 @@ func (s *DefaultAgentSpawner) Spawn(ctx context.Context, task *models.Task, opts
 		WorkersRunning: opts.WorkersRunning,
 		WorkersBlocked: opts.WorkersBlocked,
 	})
+	log.Printf("[agent_spawner] EventTaskStarted EMITTED for task %s", task.ID)
 
 	// Spawn agent goroutine
 	go func() {

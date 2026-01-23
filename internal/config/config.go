@@ -16,6 +16,7 @@ import (
 // Config holds all configuration for Alphie.
 type Config struct {
 	Anthropic    AnthropicConfig    `mapstructure:"anthropic"`
+	AWS          AWSConfig          `mapstructure:"aws"`
 	Defaults     DefaultsConfig     `mapstructure:"defaults"`
 	TUI          TUIConfig          `mapstructure:"tui"`
 	Timeouts     TimeoutsConfig     `mapstructure:"timeouts"`
@@ -24,7 +25,14 @@ type Config struct {
 
 // AnthropicConfig holds Anthropic API settings.
 type AnthropicConfig struct {
-	APIKey string `mapstructure:"api_key"`
+	APIKey  string `mapstructure:"api_key"`
+	Backend string `mapstructure:"backend"` // "api" (default) or "bedrock"
+}
+
+// AWSConfig holds AWS settings for Bedrock.
+type AWSConfig struct {
+	Region  string `mapstructure:"region"`
+	Profile string `mapstructure:"profile"` // optional AWS profile name
 }
 
 // DefaultsConfig holds default values for Alphie sessions.
@@ -185,6 +193,8 @@ func Load() (*Config, error) {
 
 	// Map specific environment variables
 	v.BindEnv("anthropic.api_key", "ANTHROPIC_API_KEY")
+	v.BindEnv("aws.region", "AWS_REGION", "AWS_DEFAULT_REGION")
+	v.BindEnv("aws.profile", "AWS_PROFILE")
 
 	// Expand environment variable references in api_key
 	cfg := &Config{}
@@ -260,6 +270,11 @@ func GetProjectConfigPath() string {
 func setDefaults(v *viper.Viper) {
 	// Anthropic defaults
 	v.SetDefault("anthropic.api_key", "")
+	v.SetDefault("anthropic.backend", "api")
+
+	// AWS defaults
+	v.SetDefault("aws.region", "")
+	v.SetDefault("aws.profile", "")
 
 	// Session defaults
 	v.SetDefault("defaults.tier", "builder")
@@ -327,7 +342,12 @@ func expandEnv(s string) string {
 func Default() *Config {
 	return &Config{
 		Anthropic: AnthropicConfig{
-			APIKey: "",
+			APIKey:  "",
+			Backend: "api",
+		},
+		AWS: AWSConfig{
+			Region:  "",
+			Profile: "",
 		},
 		Defaults: DefaultsConfig{
 			Tier:        "builder",
@@ -348,6 +368,28 @@ func Default() *Config {
 			Typecheck: true,
 		},
 	}
+}
+
+// ValidateBackendConfig validates the backend configuration.
+func (c *Config) ValidateBackendConfig() error {
+	backend := c.Anthropic.Backend
+	if backend == "" {
+		backend = "api"
+	}
+
+	switch backend {
+	case "api", "":
+		if c.Anthropic.APIKey == "" && os.Getenv("ANTHROPIC_API_KEY") == "" {
+			return fmt.Errorf("API mode requires ANTHROPIC_API_KEY")
+		}
+	case "bedrock":
+		if c.AWS.Region == "" && os.Getenv("AWS_REGION") == "" && os.Getenv("AWS_DEFAULT_REGION") == "" {
+			return fmt.Errorf("Bedrock mode requires AWS region (set aws.region in config or AWS_REGION env var)")
+		}
+	default:
+		return fmt.Errorf("invalid backend: %q (must be 'api' or 'bedrock')", backend)
+	}
+	return nil
 }
 
 // LoadTierConfigs loads tier configurations from the configs/ directory.

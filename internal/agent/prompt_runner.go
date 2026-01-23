@@ -35,7 +35,7 @@ func (r *ClaudePromptRunner) RunPrompt(ctx context.Context, prompt string, workD
 	claude := r.factory.NewRunner()
 
 	// Start with Sonnet for verification generation (fast and capable)
-	opts := &StartOptions{Model: "sonnet"}
+	opts := &StartOptions{Model: ModelSonnet}
 	if err := claude.StartWithOptions(prompt, workDir, opts); err != nil {
 		return "", fmt.Errorf("start claude process: %w", err)
 	}

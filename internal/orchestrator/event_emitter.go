@@ -39,9 +39,8 @@ func (e *EventEmitter) Emit(event OrchestratorEvent) {
 	case <-time.After(100 * time.Millisecond):
 		// Timeout expired, drop the event
 		count := e.droppedCount.Add(1)
-		if count%10 == 1 { // Log every 10th drop to avoid spam
-			log.Printf("[orchestrator] WARNING: Event channel full, dropped event (total dropped: %d): type=%s", count, event.Type)
-		}
+		log.Printf("[EventEmitter] DROPPED EVENT #%d: type=%s, taskID=%s (channel full, timeout after 100ms)",
+			count, event.Type, event.TaskID)
 	}
 }
 

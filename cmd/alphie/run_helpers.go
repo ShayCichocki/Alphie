@@ -12,18 +12,23 @@ import (
 
 // modelForTier returns the Claude model to use for a given tier.
 func modelForTier(tier models.Tier) string {
-	switch tier {
-	case models.TierQuick:
-		return "haiku"
-	case models.TierScout:
-		return "haiku"
-	case models.TierBuilder:
-		return "sonnet"
-	case models.TierArchitect:
-		return "opus"
-	default:
-		return "sonnet"
-	}
+	// TEMPORARY: Use the same model for all tiers for Bedrock testing
+	// TODO: Map tier strings to proper Bedrock model IDs
+	return "claude-sonnet-4-20250514"
+
+	// Original logic (commented out):
+	// switch tier {
+	// case models.TierQuick:
+	// 	return "haiku"
+	// case models.TierScout:
+	// 	return "haiku"
+	// case models.TierBuilder:
+	// 	return "sonnet"
+	// case models.TierArchitect:
+	// 	return "opus"
+	// default:
+	// 	return "sonnet"
+	// }
 }
 
 // maxAgentsFromTierConfigs returns the maximum concurrent agents from tier configs.

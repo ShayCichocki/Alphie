@@ -342,3 +342,158 @@ func TestTierConfigsGet(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateBackendConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		cfg         *Config
+		envVars     map[string]string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "api mode with api key in config",
+			cfg: &Config{
+				Anthropic: AnthropicConfig{
+					APIKey:  "sk-ant-test123",
+					Backend: "api",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "api mode with api key in env",
+			cfg: &Config{
+				Anthropic: AnthropicConfig{
+					Backend: "api",
+				},
+			},
+			envVars: map[string]string{
+				"ANTHROPIC_API_KEY": "sk-ant-test123",
+			},
+			wantErr: false,
+		},
+		{
+			name: "api mode without api key",
+			cfg: &Config{
+				Anthropic: AnthropicConfig{
+					Backend: "api",
+				},
+			},
+			wantErr:     true,
+			errContains: "API mode requires ANTHROPIC_API_KEY",
+		},
+		{
+			name: "bedrock mode with region in config",
+			cfg: &Config{
+				Anthropic: AnthropicConfig{
+					Backend: "bedrock",
+				},
+				AWS: AWSConfig{
+					Region: "us-west-2",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "bedrock mode with region in env",
+			cfg: &Config{
+				Anthropic: AnthropicConfig{
+					Backend: "bedrock",
+				},
+			},
+			envVars: map[string]string{
+				"AWS_REGION": "us-west-2",
+			},
+			wantErr: false,
+		},
+		{
+			name: "bedrock mode with default region in env",
+			cfg: &Config{
+				Anthropic: AnthropicConfig{
+					Backend: "bedrock",
+				},
+			},
+			envVars: map[string]string{
+				"AWS_DEFAULT_REGION": "us-west-2",
+			},
+			wantErr: false,
+		},
+		{
+			name: "bedrock mode without region",
+			cfg: &Config{
+				Anthropic: AnthropicConfig{
+					Backend: "bedrock",
+				},
+			},
+			wantErr:     true,
+			errContains: "Bedrock mode requires AWS region",
+		},
+		{
+			name: "invalid backend",
+			cfg: &Config{
+				Anthropic: AnthropicConfig{
+					Backend: "invalid",
+				},
+			},
+			wantErr:     true,
+			errContains: "invalid backend",
+		},
+		{
+			name: "empty backend defaults to api",
+			cfg: &Config{
+				Anthropic: AnthropicConfig{
+					APIKey:  "sk-ant-test123",
+					Backend: "",
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up environment variables
+			for k, v := range tt.envVars {
+				os.Setenv(k, v)
+				defer os.Unsetenv(k)
+			}
+
+			// Clear any existing env vars not in test case
+			if tt.envVars == nil || tt.envVars["ANTHROPIC_API_KEY"] == "" {
+				os.Unsetenv("ANTHROPIC_API_KEY")
+			}
+			if tt.envVars == nil || (tt.envVars["AWS_REGION"] == "" && tt.envVars["AWS_DEFAULT_REGION"] == "") {
+				os.Unsetenv("AWS_REGION")
+				os.Unsetenv("AWS_DEFAULT_REGION")
+			}
+
+			err := tt.cfg.ValidateBackendConfig()
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateBackendConfig() expected error, got nil")
+				} else if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+					t.Errorf("ValidateBackendConfig() error = %q, want to contain %q", err.Error(), tt.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateBackendConfig() unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && findSubstring(s, substr))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

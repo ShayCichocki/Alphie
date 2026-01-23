@@ -217,6 +217,7 @@ func (o *Orchestrator) handleSuccessfulTask(ctx context.Context, task *models.Ta
 	o.learningCoord.CaptureOnCompletion(task, result)
 
 	// Emit completion event
+	o.logger.Log("[task_completion] EMITTING EventTaskCompleted for task %s (agent %s)", task.ID, result.AgentID)
 	o.emitEvent(OrchestratorEvent{
 		Type:      EventTaskCompleted,
 		TaskID:    task.ID,
@@ -227,6 +228,7 @@ func (o *Orchestrator) handleSuccessfulTask(ctx context.Context, task *models.Ta
 		Timestamp: time.Now(),
 		LogFile:   result.LogFile,
 	})
+	o.logger.Log("[task_completion] EventTaskCompleted EMITTED for task %s", task.ID)
 
 	return mergeOutcome, nil
 }
@@ -276,6 +278,7 @@ func (o *Orchestrator) handleFailedTask(task *models.Task, result *agent.Executi
 		o.progCoord.BlockTask(task.ID, result.Error)
 	}
 
+	o.logger.Log("[task_completion] EMITTING EventTaskFailed for task %s (agent %s, retry=%v)", task.ID, result.AgentID, shouldRetry)
 	o.emitEvent(OrchestratorEvent{
 		Type:      EventTaskFailed,
 		TaskID:    task.ID,
@@ -287,6 +290,7 @@ func (o *Orchestrator) handleFailedTask(task *models.Task, result *agent.Executi
 		Timestamp: time.Now(),
 		LogFile:   result.LogFile,
 	})
+	o.logger.Log("[task_completion] EventTaskFailed EMITTED for task %s", task.ID)
 }
 
 // performMerge attempts to merge the agent's work into the session branch.

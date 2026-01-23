@@ -189,3 +189,61 @@ func TestClient_Inner(t *testing.T) {
 		t.Errorf("Expected model %s, got %s", anthropic.ModelClaudeSonnet4_20250514, client.Model())
 	}
 }
+
+func TestNewClient_Bedrock(t *testing.T) {
+	// Skip if AWS credentials not available
+	if os.Getenv("AWS_REGION") == "" && os.Getenv("AWS_DEFAULT_REGION") == "" {
+		t.Skip("AWS_REGION not set, skipping Bedrock test")
+	}
+
+	cfg := ClientConfig{
+		UseAWSBedrock: true,
+		AWSRegion:     "us-west-2",
+		Model:         anthropic.ModelClaudeSonnet4_20250514,
+	}
+
+	client, err := NewClient(cfg)
+	if err != nil {
+		t.Fatalf("NewClient with Bedrock failed: %v", err)
+	}
+	if client == nil {
+		t.Fatal("NewClient returned nil")
+	}
+
+	if client.Model() != anthropic.ModelClaudeSonnet4_20250514 {
+		t.Errorf("Model = %q, want %q", client.Model(), anthropic.ModelClaudeSonnet4_20250514)
+	}
+
+	if client.Tracker() == nil {
+		t.Error("Tracker should not be nil")
+	}
+}
+
+func TestNewClient_BedrockWithProfile(t *testing.T) {
+	// Skip if AWS credentials not available
+	if os.Getenv("AWS_REGION") == "" && os.Getenv("AWS_DEFAULT_REGION") == "" {
+		t.Skip("AWS_REGION not set, skipping Bedrock test")
+	}
+
+	cfg := ClientConfig{
+		UseAWSBedrock: true,
+		AWSRegion:     "us-west-2",
+		AWSProfile:    "bedrock",
+		Model:         anthropic.ModelClaudeSonnet4_20250514,
+	}
+
+	client, err := NewClient(cfg)
+	// Note: This may fail if the profile doesn't exist, which is OK for unit tests
+	// The important thing is that the code doesn't panic or have syntax errors
+	if err != nil {
+		t.Logf("NewClient with Bedrock profile failed (expected if profile not configured): %v", err)
+		return
+	}
+	if client == nil {
+		t.Fatal("NewClient returned nil")
+	}
+
+	if client.Model() != anthropic.ModelClaudeSonnet4_20250514 {
+		t.Errorf("Model = %q, want %q", client.Model(), anthropic.ModelClaudeSonnet4_20250514)
+	}
+}

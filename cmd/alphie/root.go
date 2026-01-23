@@ -55,6 +55,9 @@ func Execute() {
 }
 
 func init() {
+	// Set version for --version flag
+	rootCmd.Version = Version()
+
 	// Add flags for interactive mode
 	rootCmd.Flags().BoolVar(&interactiveResume, "resume", false, "Resume incomplete tasks from previous sessions")
 	rootCmd.Flags().BoolVar(&interactiveGreenfield, "greenfield", false, "Direct merge to main (skip session branches)")
@@ -70,4 +73,5 @@ func init() {
 	rootCmd.AddCommand(baselineCmd)
 	rootCmd.AddCommand(auditCmd)
 	rootCmd.AddCommand(implementCmd)
+	rootCmd.AddCommand(versionCmd)
 }

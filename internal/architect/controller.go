@@ -58,10 +58,20 @@ type ProgressEvent struct {
 	WorkersRunning int
 	// WorkersBlocked is the number of tasks blocked by dependencies or collisions.
 	WorkersBlocked int
+	// ActiveWorkers contains detailed info about each active worker for debugging.
+	ActiveWorkers map[string]WorkerInfo
 	// Message is an optional status message.
 	Message string
 	// Timestamp is when the event occurred.
 	Timestamp time.Time
+}
+
+// WorkerInfo contains information about an active worker.
+type WorkerInfo struct {
+	AgentID   string
+	TaskID    string
+	TaskTitle string
+	Status    string
 }
 
 // ProgressCallback is called when progress events occur.
@@ -113,6 +123,9 @@ type Controller struct {
 	featureToTasks map[string][]string // maps feature ID to task IDs
 	completedTasks map[string]bool     // tracks which tasks are done
 	featureGaps    map[string]Gap      // maps feature ID to gap details
+
+	// Active worker tracking (for UI display)
+	activeWorkers map[string]WorkerInfo // maps agent ID to worker info
 }
 
 // ControllerOption is a functional option for configuring a Controller.
@@ -185,7 +198,8 @@ func NewController(maxIterations int, budget float64, noConvergeAfter int, opts 
 			BudgetLimit:     budget,
 			NoProgressLimit: noConvergeAfter,
 		}),
-		tokenTracker: agent.NewTokenTracker("sonnet"),
+		tokenTracker:  agent.NewTokenTracker("sonnet"),
+		activeWorkers: make(map[string]WorkerInfo),
 	}
 
 	for _, opt := range opts {
@@ -583,6 +597,14 @@ func (c *Controller) createOrchestrator(epicID string, agents int) (*orchestrato
 func (c *Controller) handleOrchestratorEvent(event orchestrator.OrchestratorEvent) {
 	switch event.Type {
 	case orchestrator.EventTaskStarted:
+		// Track active worker
+		c.activeWorkers[event.AgentID] = WorkerInfo{
+			AgentID:   event.AgentID,
+			TaskID:    event.TaskID,
+			TaskTitle: event.TaskTitle,
+			Status:    "running",
+		}
+
 		c.emitProgress(ProgressEvent{
 			Phase:            PhaseExecuting,
 			Iteration:        c.currentIteration,
@@ -593,8 +615,12 @@ func (c *Controller) handleOrchestratorEvent(event orchestrator.OrchestratorEven
 			Cost:             event.Cost,
 			WorkersRunning:   event.WorkersRunning,
 			WorkersBlocked:   event.WorkersBlocked,
+			ActiveWorkers:    c.cloneActiveWorkers(),
 		})
 	case orchestrator.EventTaskCompleted:
+		// Remove from active workers
+		delete(c.activeWorkers, event.AgentID)
+
 		// Update feature completion tracking
 		c.updateFeatureCompletion(event.TaskID)
 
@@ -608,6 +634,23 @@ func (c *Controller) handleOrchestratorEvent(event orchestrator.OrchestratorEven
 			Cost:             event.Cost,
 			WorkersRunning:   event.WorkersRunning,
 			WorkersBlocked:   event.WorkersBlocked,
+			ActiveWorkers:    c.cloneActiveWorkers(),
+		})
+	case orchestrator.EventTaskFailed:
+		// Remove from active workers
+		delete(c.activeWorkers, event.AgentID)
+
+		c.emitProgress(ProgressEvent{
+			Phase:            PhaseExecuting,
+			Iteration:        c.currentIteration,
+			MaxIterations:    c.MaxIterations,
+			FeaturesComplete: c.currentFeaturesComplete,
+			FeaturesTotal:    c.currentFeaturesTotal,
+			Message:          fmt.Sprintf("Failed: %s", event.TaskTitle),
+			Cost:             event.Cost,
+			WorkersRunning:   event.WorkersRunning,
+			WorkersBlocked:   event.WorkersBlocked,
+			ActiveWorkers:    c.cloneActiveWorkers(),
 		})
 	case orchestrator.EventAgentProgress:
 		if event.CurrentAction != "" {
@@ -621,9 +664,19 @@ func (c *Controller) handleOrchestratorEvent(event orchestrator.OrchestratorEven
 				Cost:             event.Cost,
 				WorkersRunning:   event.WorkersRunning,
 				WorkersBlocked:   event.WorkersBlocked,
+				ActiveWorkers:    c.cloneActiveWorkers(),
 			})
 		}
 	}
+}
+
+// cloneActiveWorkers creates a copy of the active workers map for safe passing.
+func (c *Controller) cloneActiveWorkers() map[string]WorkerInfo {
+	clone := make(map[string]WorkerInfo, len(c.activeWorkers))
+	for k, v := range c.activeWorkers {
+		clone[k] = v
+	}
+	return clone
 }
 
 // updateFeatureCompletion checks if completing this task completes a feature,

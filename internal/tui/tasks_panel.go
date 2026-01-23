@@ -373,8 +373,18 @@ func (p *TasksPanel) renderChildLine(task *models.Task, selected bool) string {
 
 	icon := p.statusIcon(task.Status)
 
+	// Add agent ID if assigned
+	agentSuffix := ""
+	if task.AssignedTo != "" {
+		agentShort := task.AssignedTo
+		if len(agentShort) > 8 {
+			agentShort = agentShort[:8]
+		}
+		agentSuffix = fmt.Sprintf(" [%s]", agentShort)
+	}
+
 	// Truncate title
-	maxTitleLen := p.width - 12 // Account for indent, icon, padding
+	maxTitleLen := p.width - 12 - len(agentSuffix) // Account for indent, icon, padding, agent
 	if maxTitleLen < 10 {
 		maxTitleLen = 10
 	}
@@ -383,7 +393,7 @@ func (p *TasksPanel) renderChildLine(task *models.Task, selected bool) string {
 		title = title[:maxTitleLen-3] + "..."
 	}
 
-	line := fmt.Sprintf("   └─ %s %s", icon, title)
+	line := fmt.Sprintf("   └─ %s %s%s", icon, title, p.childStyle.Render(agentSuffix))
 
 	// Add error preview for failed tasks
 	if task.Status == models.TaskStatusFailed && task.Error != "" {
@@ -412,8 +422,18 @@ func (p *TasksPanel) renderTaskLine(task *models.Task, selected bool) string {
 
 	icon := p.statusIcon(task.Status)
 
+	// Add agent ID if assigned
+	agentSuffix := ""
+	if task.AssignedTo != "" {
+		agentShort := task.AssignedTo
+		if len(agentShort) > 8 {
+			agentShort = agentShort[:8]
+		}
+		agentSuffix = fmt.Sprintf(" [%s]", agentShort)
+	}
+
 	// Truncate title to fit
-	maxTitleLen := p.width - 8 // Account for icon, padding, border
+	maxTitleLen := p.width - 8 - len(agentSuffix) // Account for icon, padding, border, agent
 	if maxTitleLen < 10 {
 		maxTitleLen = 10
 	}
@@ -422,7 +442,7 @@ func (p *TasksPanel) renderTaskLine(task *models.Task, selected bool) string {
 		title = title[:maxTitleLen-3] + "..."
 	}
 
-	line := fmt.Sprintf(" %s %s", icon, title)
+	line := fmt.Sprintf(" %s %s%s", icon, title, p.childStyle.Render(agentSuffix))
 
 	// Add error preview for failed tasks
 	if task.Status == models.TaskStatusFailed && task.Error != "" {

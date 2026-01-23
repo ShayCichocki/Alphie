@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"fmt"
+
+	"github.com/ShayCichocki/alphie/internal/version"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -46,11 +49,11 @@ func (h *Header) View() string {
 	// Join lines
 	logoBlock := lipgloss.JoinVertical(lipgloss.Left, styledLines...)
 
-	// Subtitle
+	// Subtitle with version
 	subtitle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("243")).
 		Italic(true).
-		Render("Agent Orchestrator & Learning Engine")
+		Render(fmt.Sprintf("Agent Orchestrator & Learning Engine • v%s", version.Get()))
 
 	// Center the logo and subtitle
 	logoStyle := lipgloss.NewStyle().

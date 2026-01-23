@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ShayCichocki/alphie/internal/agent"
 )
@@ -130,6 +131,14 @@ func (a *Auditor) Audit(ctx context.Context, spec *ArchSpec, repoPath string, cl
 			}
 		case agent.StreamEventError:
 			if event.Error != "" {
+				// Debug: Write error to file
+				if debugFile, ferr := os.OpenFile("/tmp/alphie-audit-error.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); ferr == nil {
+					fmt.Fprintf(debugFile, "[%s] Audit Error:\n", time.Now().Format(time.RFC3339))
+					fmt.Fprintf(debugFile, "  Error: %s\n", event.Error)
+					fmt.Fprintf(debugFile, "  ToolAction: %s\n", event.ToolAction)
+					fmt.Fprintf(debugFile, "\n")
+					debugFile.Close()
+				}
 				return nil, fmt.Errorf("claude error: %s", event.Error)
 			}
 		}

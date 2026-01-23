@@ -10,11 +10,11 @@ import (
 // Model identifiers for different capability levels.
 const (
 	// ModelHaiku is the lightweight, fast model for simple tasks.
-	ModelHaiku = "haiku"
+	ModelHaiku = "claude-haiku-4-5-20251001"
 	// ModelSonnet is the balanced model for standard work.
-	ModelSonnet = "sonnet"
+	ModelSonnet = "claude-sonnet-4-20250514"
 	// ModelOpus is the most capable model for complex tasks.
-	ModelOpus = "opus"
+	ModelOpus = "claude-opus-4-5-20251101"
 )
 
 // Keywords that indicate a task should use haiku (simple tasks).

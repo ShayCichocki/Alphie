@@ -326,10 +326,20 @@ func resumeIncompleteTasks(program *tea.Program, pool *orchestrator.Orchestrator
 }
 
 func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.OrchestratorPool, program *tea.Program, activeTaskCount *int32) {
+	// Periodic check for dropped events
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-ticker.C:
+			// Check for dropped events and warn if any
+			dropped := pool.DroppedEventCount()
+			if dropped > 0 {
+				log.Printf("[interactive] WARNING: %d events have been dropped due to full channel", dropped)
+			}
 		case event, ok := <-pool.Events():
 			if !ok {
 				return
@@ -359,6 +369,7 @@ func forwardPoolEventsToTUI(ctx context.Context, pool *orchestrator.Orchestrator
 				msg.Error = event.Error.Error()
 			}
 
+			log.Printf("[interactive] Forwarding event to TUI: type=%s, taskID=%s, agentID=%s", event.Type, event.TaskID, event.AgentID)
 			program.Send(msg)
 
 			// Track task completion

@@ -397,6 +397,11 @@ func (o *Orchestrator) Events() <-chan OrchestratorEvent {
 	return o.emitter.Events()
 }
 
+// DroppedEventCount returns the number of events dropped due to full channel.
+func (o *Orchestrator) DroppedEventCount() uint64 {
+	return o.emitter.DroppedCount()
+}
+
 // emitEvent sends an event to the events channel.
 func (o *Orchestrator) emitEvent(event OrchestratorEvent) {
 	o.emitter.Emit(event)

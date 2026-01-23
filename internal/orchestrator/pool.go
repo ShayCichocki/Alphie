@@ -163,3 +163,15 @@ func (p *OrchestratorPool) Count() int {
 	defer p.mu.RUnlock()
 	return len(p.orchestrators)
 }
+
+// DroppedEventCount returns the total dropped events across all orchestrators.
+func (p *OrchestratorPool) DroppedEventCount() uint64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	var total uint64
+	for _, orch := range p.orchestrators {
+		total += orch.DroppedEventCount()
+	}
+	return total
+}

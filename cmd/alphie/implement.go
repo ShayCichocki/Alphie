@@ -133,6 +133,17 @@ func runImplement(cmd *cobra.Command, args []string) error {
 	progressCallback := func(event architect.ProgressEvent) {
 		phaseStr := string(event.Phase)
 
+		// Convert architect.WorkerInfo to tui.WorkerInfo
+		activeWorkers := make(map[string]tui.WorkerInfo)
+		for k, v := range event.ActiveWorkers {
+			activeWorkers[k] = tui.WorkerInfo{
+				AgentID:   v.AgentID,
+				TaskID:    v.TaskID,
+				TaskTitle: v.TaskTitle,
+				Status:    v.Status,
+			}
+		}
+
 		program.Send(tui.ImplementUpdateMsg{
 			State: tui.ImplementState{
 				Iteration:        event.Iteration,
@@ -144,6 +155,7 @@ func runImplement(cmd *cobra.Command, args []string) error {
 				CurrentPhase:     phaseStr,
 				WorkersRunning:   event.WorkersRunning,
 				WorkersBlocked:   event.WorkersBlocked,
+				ActiveWorkers:    activeWorkers,
 			},
 		})
 

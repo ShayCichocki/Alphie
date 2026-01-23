@@ -2,12 +2,16 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/bedrock"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/aws/aws-sdk-go-v2/config"
 )
 
 // Client wraps the Anthropic SDK client with token tracking.
@@ -23,23 +27,53 @@ type ClientConfig struct {
 	Model anthropic.Model
 	// APIKey is the Anthropic API key. If empty, uses ANTHROPIC_API_KEY env var.
 	APIKey string
+	// UseAWSBedrock indicates whether to use AWS Bedrock instead of direct API.
+	UseAWSBedrock bool
+	// AWSRegion is the AWS region for Bedrock (e.g., "us-west-2").
+	AWSRegion string
+	// AWSProfile is the optional AWS profile name to use.
+	AWSProfile string
 }
 
 // NewClient creates a new Anthropic API client.
 func NewClient(cfg ClientConfig) (*Client, error) {
-	apiKey := cfg.APIKey
-	if apiKey == "" {
-		apiKey = os.Getenv("ANTHROPIC_API_KEY")
-	}
-	if apiKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY environment variable is not set")
+	var opts []option.RequestOption
+
+	if cfg.UseAWSBedrock {
+		// AWS Bedrock path
+		ctx := context.Background()
+
+		var loadOpts []func(*config.LoadOptions) error
+		if cfg.AWSRegion != "" {
+			loadOpts = append(loadOpts, config.WithRegion(cfg.AWSRegion))
+		}
+		if cfg.AWSProfile != "" {
+			loadOpts = append(loadOpts, config.WithSharedConfigProfile(cfg.AWSProfile))
+		}
+
+		opts = append(opts, bedrock.WithLoadDefaultConfig(ctx, loadOpts...))
+	} else {
+		// Traditional API key path
+		apiKey := cfg.APIKey
+		if apiKey == "" {
+			apiKey = os.Getenv("ANTHROPIC_API_KEY")
+		}
+		if apiKey == "" {
+			return nil, fmt.Errorf("ANTHROPIC_API_KEY environment variable is not set")
+		}
+		opts = append(opts, option.WithAPIKey(apiKey))
 	}
 
-	inner := anthropic.NewClient(option.WithAPIKey(apiKey))
+	inner := anthropic.NewClient(opts...)
 
 	model := cfg.Model
 	if model == "" {
 		model = anthropic.ModelClaudeSonnet4_20250514
+	}
+
+	// Translate model name for Bedrock
+	if cfg.UseAWSBedrock {
+		model = translateModelForBedrock(model)
 	}
 
 	return &Client{
@@ -47,6 +81,28 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		model:   model,
 		tracker: NewTokenTracker(),
 	}, nil
+}
+
+// translateModelForBedrock converts standard Anthropic model names to Bedrock inference profile format.
+// Bedrock uses cross-region inference profiles: us.anthropic.{model}-v1:0
+func translateModelForBedrock(model anthropic.Model) anthropic.Model {
+	// Map common model names to Bedrock inference profiles (with us. prefix for cross-region)
+	bedrockModels := map[anthropic.Model]string{
+		anthropic.ModelClaudeSonnet4_20250514:    "us.anthropic.claude-sonnet-4-20250514-v1:0",
+		anthropic.ModelClaudeSonnet4_5_20250929:  "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		anthropic.ModelClaudeHaiku4_5_20251001:   "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+		anthropic.ModelClaudeOpus4_1_20250805:    "us.anthropic.claude-opus-4-1-20250805-v1:0",
+		anthropic.ModelClaudeOpus4_5_20251101:    "us.anthropic.claude-opus-4-5-20251101-v1:0",
+		anthropic.ModelClaude3_7Sonnet20250219:   "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+		anthropic.ModelClaude3_5Haiku20241022:    "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+	}
+
+	if bedrockModel, ok := bedrockModels[model]; ok {
+		return anthropic.Model(bedrockModel)
+	}
+
+	// If not in map, return as-is (might already be Bedrock format or a custom model)
+	return model
 }
 
 // sdk returns the underlying Anthropic client for internal API access.
@@ -63,6 +119,17 @@ func (c *Client) Model() anthropic.Model {
 // Tracker returns the token tracker for this client.
 func (c *Client) Tracker() *TokenTracker {
 	return c.tracker
+}
+
+// TranslateModel translates a model name for Bedrock if needed.
+// This is used when model names are provided dynamically (e.g., via StartOptions).
+func (c *Client) TranslateModel(model anthropic.Model) anthropic.Model {
+	// Only translate if this client is using Bedrock
+	// Check if our configured model starts with "us.anthropic" (Bedrock format)
+	if strings.HasPrefix(string(c.model), "us.anthropic") {
+		return translateModelForBedrock(model)
+	}
+	return model
 }
 
 // TokenTracker tracks token usage across API calls.

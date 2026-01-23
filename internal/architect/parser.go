@@ -236,16 +236,50 @@ func parseResponse(response string) (*ArchSpec, error) {
 		response = strings.TrimSpace(response)
 	}
 
-	// Try to find JSON object in the response
+	// Try to find the first complete JSON object in the response
 	start := strings.Index(response, "{")
-	end := strings.LastIndex(response, "}")
-	if start == -1 || end == -1 || end < start {
+	if start == -1 {
 		return nil, fmt.Errorf("no valid JSON object found in response")
+	}
+
+	// Find the matching closing brace by counting depth
+	depth := 0
+	end := -1
+	for i := start; i < len(response); i++ {
+		switch response[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				end = i
+				break
+			}
+		}
+		if end != -1 {
+			break
+		}
+	}
+
+	if end == -1 {
+		return nil, fmt.Errorf("no complete JSON object found in response")
 	}
 	response = response[start : end+1]
 
+	// Debug: Write response to file
+	if debugFile, ferr := os.OpenFile("/tmp/alphie-parse-response.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); ferr == nil {
+		fmt.Fprintf(debugFile, "[%s] Parsing response:\n", time.Now().Format(time.RFC3339))
+		fmt.Fprintf(debugFile, "%s\n\n", response)
+		debugFile.Close()
+	}
+
 	var spec ArchSpec
 	if err := json.Unmarshal([]byte(response), &spec); err != nil {
+		// Debug: Write error to file
+		if debugFile, ferr := os.OpenFile("/tmp/alphie-parse-response.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); ferr == nil {
+			fmt.Fprintf(debugFile, "[%s] Parse error: %v\n\n", time.Now().Format(time.RFC3339), err)
+			debugFile.Close()
+		}
 		return nil, fmt.Errorf("unmarshal JSON: %w", err)
 	}
 

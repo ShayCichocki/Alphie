@@ -109,7 +109,20 @@ func (c *AgentCard) View() string {
 	var b strings.Builder
 	contentWidth := c.width - 6 // Account for border and padding
 
-	// Line 1: Task title (primary identifier)
+	// Line 1: Agent ID (for log correlation) + Task ID short form
+	agentShort := c.data.ID
+	if len(agentShort) > 8 {
+		agentShort = agentShort[:8] // Show first 8 chars
+	}
+	taskShort := c.data.TaskID
+	if len(taskShort) > 8 {
+		taskShort = taskShort[:8]
+	}
+	idLine := fmt.Sprintf("A:%s T:%s", agentShort, taskShort)
+	b.WriteString(c.labelStyle.Render(idLine))
+	b.WriteString("\n")
+
+	// Line 2: Task title
 	title := c.data.TaskTitle
 	if title == "" {
 		title = c.data.TaskID
@@ -120,17 +133,17 @@ func (c *AgentCard) View() string {
 	b.WriteString(c.idStyle.Render(title))
 	b.WriteString("\n")
 
-	// Line 2: Status with action or final state
+	// Line 3: Status with action or final state
 	b.WriteString(c.renderStatusLine(contentWidth))
 	b.WriteString("\n")
 
-	// Line 3: Tokens + Cost (combined)
+	// Line 4: Tokens + Cost (combined)
 	tokensStr := formatTokensCompact(c.data.TokensUsed)
 	costStr := fmt.Sprintf("$%.2f", c.data.Cost)
 	b.WriteString(c.valueStyle.Render(tokensStr + " tokens  " + costStr))
 	b.WriteString("\n")
 
-	// Line 4: Duration
+	// Line 5: Duration
 	duration := time.Since(c.data.StartedAt)
 	durationStr := formatDuration(duration)
 	b.WriteString(c.labelStyle.Render(durationStr))

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/ShayCichocki/alphie/pkg/models"
@@ -9,6 +10,8 @@ import (
 
 // handleOrchestratorEvent processes orchestrator events.
 func (a *PanelApp) handleOrchestratorEvent(msg OrchestratorEventMsg) {
+	log.Printf("[TUI] Received event: type=%s, taskID=%s, agentID=%s", msg.Type, msg.TaskID, msg.AgentID)
+
 	// Determine log level based on event type
 	level := LogLevelInfo
 	if msg.Error != "" {
@@ -129,6 +132,8 @@ func (a *PanelApp) handleTaskStarted(msg OrchestratorEventMsg) {
 }
 
 func (a *PanelApp) handleTaskCompleted(msg OrchestratorEventMsg) {
+	log.Printf("[TUI] handleTaskCompleted: taskID=%s, agentID=%s", msg.TaskID, msg.AgentID)
+
 	// Update agent status
 	if msg.AgentID != "" {
 		agent := a.findOrCreateAgent(msg.AgentID)
@@ -142,11 +147,13 @@ func (a *PanelApp) handleTaskCompleted(msg OrchestratorEventMsg) {
 	// Update task status
 	if msg.TaskID != "" {
 		task := a.findOrCreateTask(msg.TaskID)
+		log.Printf("[TUI] Setting task %s status to Done (was: %s)", task.ID, task.Status)
 		task.Status = models.TaskStatusDone
 		if msg.ParentID != "" {
 			task.ParentID = msg.ParentID
 		}
 		a.tasksPanel.SetTasks(a.tasks)
+		log.Printf("[TUI] Task panel updated for task %s", msg.TaskID)
 		// Check if all siblings under the same parent are done
 		a.checkParentCompletion(task.ParentID)
 	}
@@ -162,6 +169,8 @@ func (a *PanelApp) handleTaskCompleted(msg OrchestratorEventMsg) {
 }
 
 func (a *PanelApp) handleTaskFailed(msg OrchestratorEventMsg) {
+	log.Printf("[TUI] handleTaskFailed: taskID=%s, agentID=%s, error=%s", msg.TaskID, msg.AgentID, msg.Error)
+
 	// Update agent status
 	if msg.AgentID != "" {
 		agent := a.findOrCreateAgent(msg.AgentID)
@@ -176,9 +185,11 @@ func (a *PanelApp) handleTaskFailed(msg OrchestratorEventMsg) {
 	// Update task status
 	if msg.TaskID != "" {
 		task := a.findOrCreateTask(msg.TaskID)
+		log.Printf("[TUI] Setting task %s status to Failed (was: %s)", task.ID, task.Status)
 		task.Status = models.TaskStatusFailed
 		task.Error = msg.Error // Store the error message
 		a.tasksPanel.SetTasks(a.tasks)
+		log.Printf("[TUI] Task panel updated for task %s", msg.TaskID)
 	}
 	// Add log entry with log file path
 	if msg.LogFile != "" {
