@@ -8,6 +8,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Global flags
+var (
+	greenfieldEnabled bool // Greenfield mode: merge directly to main
+)
+
 // CheckClaudeCLI verifies that the 'claude' CLI is available in PATH.
 // Returns an error with installation instructions if not found.
 func CheckClaudeCLI() error {
@@ -56,6 +61,9 @@ func Execute() {
 func init() {
 	// Set version for --version flag
 	rootCmd.Version = Version()
+
+	// Add global persistent flags
+	rootCmd.PersistentFlags().BoolVar(&greenfieldEnabled, "greenfield", false, "Greenfield mode: merge directly to main (no session branch)")
 
 	// Add subcommands
 	rootCmd.AddCommand(versionCmd)
