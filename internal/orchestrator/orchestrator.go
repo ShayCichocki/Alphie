@@ -30,6 +30,9 @@ type OrchestratorConfig struct {
 	Policy *policy.Config
 	// Greenfield indicates if this is a new project (no session branch needed).
 	Greenfield bool
+	// SpecName is the name extracted from the spec file for branch naming.
+	// If empty, a default name is used. Format: alphie-{spec-name}-{timestamp}
+	SpecName string
 	// DecomposerClaude is the Claude runner for task decomposition.
 	DecomposerClaude agent.ClaudeRunner
 	// MergerClaude is the Claude runner for semantic merge operations.
@@ -219,7 +222,7 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 	}
 
 	// Session branch manager
-	sessionMgr := NewSessionBranchManagerWithRunner(sessionID, cfg.RepoPath, cfg.Greenfield, gitRunner)
+	sessionMgr := NewSessionBranchManagerWithRunner(sessionID, cfg.RepoPath, cfg.Greenfield, cfg.SpecName, gitRunner)
 
 	// Create or use injected merge strategy
 	mergeStrategy := cfg.MergeStrategy

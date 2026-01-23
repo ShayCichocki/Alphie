@@ -8,50 +8,57 @@ func TestSessionBranchManager_BranchNaming(t *testing.T) {
 	tests := []struct {
 		name       string
 		sessionID  string
+		specName   string
 		greenfield bool
 		expected   string
 	}{
 		{
-			name:       "standard session branch naming",
+			name:       "standard branch naming with spec name",
 			sessionID:  "abc123",
+			specName:   "auth-system",
 			greenfield: false,
-			expected:   "session-abc123",
+			expected:   "alphie-auth-system-abc123",
 		},
 		{
-			name:       "session with hyphen in ID",
+			name:       "spec name with multiple words",
 			sessionID:  "task-001",
+			specName:   "user-api-spec",
 			greenfield: false,
-			expected:   "session-task-001",
+			expected:   "alphie-user-api-spec-task-001",
 		},
 		{
-			name:       "session with underscore",
+			name:       "fallback to session naming when no spec name",
 			sessionID:  "ts_8b7a01",
+			specName:   "",
 			greenfield: false,
-			expected:   "session-ts_8b7a01",
+			expected:   "alphie-session-ts_8b7a01",
 		},
 		{
 			name:       "greenfield mode - no branch",
 			sessionID:  "abc123",
+			specName:   "some-spec",
 			greenfield: true,
 			expected:   "",
 		},
 		{
-			name:       "empty session ID",
+			name:       "empty session ID with spec name",
 			sessionID:  "",
+			specName:   "my-spec",
 			greenfield: false,
-			expected:   "session-",
+			expected:   "alphie-my-spec-",
 		},
 		{
-			name:       "long session ID",
-			sessionID:  "very-long-session-identifier-12345",
+			name:       "long spec name and session ID",
+			sessionID:  "very-long-identifier-12345",
+			specName:   "complex-api-specification",
 			greenfield: false,
-			expected:   "session-very-long-session-identifier-12345",
+			expected:   "alphie-complex-api-specification-very-long-identifier-12345",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			manager := NewSessionBranchManager(tc.sessionID, "/tmp/repo", tc.greenfield)
+			manager := NewSessionBranchManager(tc.sessionID, "/tmp/repo", tc.greenfield, tc.specName)
 			result := manager.GetBranchName()
 			if result != tc.expected {
 				t.Errorf("expected branch name %q, got %q", tc.expected, result)
@@ -61,7 +68,7 @@ func TestSessionBranchManager_BranchNaming(t *testing.T) {
 }
 
 func TestSessionBranchManager_ProtectedBranchDetection(t *testing.T) {
-	manager := NewSessionBranchManager("test", "/tmp/repo", false)
+	manager := NewSessionBranchManager("test", "/tmp/repo", false, "test-spec")
 
 	tests := []struct {
 		name     string
@@ -168,7 +175,7 @@ func TestNewSessionBranchManager(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			manager := NewSessionBranchManager(tc.sessionID, tc.repoPath, tc.greenfield)
+			manager := NewSessionBranchManager(tc.sessionID, tc.repoPath, tc.greenfield, "")
 			if manager == nil {
 				t.Fatal("expected non-nil manager")
 			}
@@ -187,7 +194,7 @@ func TestNewSessionBranchManager(t *testing.T) {
 
 func TestSessionBranchManager_GreenfieldMode(t *testing.T) {
 	// In greenfield mode, CreateBranch and Cleanup should be no-ops
-	manager := NewSessionBranchManager("test", "/tmp/fake-repo", true)
+	manager := NewSessionBranchManager("test", "/tmp/fake-repo", true, "")
 
 	// CreateBranch should return nil in greenfield mode
 	err := manager.CreateBranch()

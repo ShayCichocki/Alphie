@@ -460,6 +460,7 @@ func createOrchestrator(cfg implementConfig, progressCallback architect.Progress
 		},
 		orchestrator.WithMaxAgents(cfg.maxAgents),
 		orchestrator.WithGreenfield(greenfieldMode),
+		orchestrator.WithSpecName(cfg.specName), // Branch naming: alphie-{spec-name}-{timestamp}
 		orchestrator.WithDecomposerClaude(decomposerClaude),
 		orchestrator.WithMergerClaude(mergerClaude),
 		orchestrator.WithSecondReviewerClaude(secondReviewerClaude),

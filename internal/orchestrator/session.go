@@ -22,10 +22,16 @@ type SessionBranchManager struct {
 
 // NewSessionBranchManager creates a new SessionBranchManager.
 // If greenfield is true, work goes directly to main without creating a session branch.
-func NewSessionBranchManager(sessionID, repoPath string, greenfield bool) *SessionBranchManager {
+// Branch name format: alphie-{spec-name}-{timestamp}
+func NewSessionBranchManager(sessionID, repoPath string, greenfield bool, specName string) *SessionBranchManager {
 	branchName := ""
 	if !greenfield {
-		branchName = fmt.Sprintf("session-%s", sessionID)
+		if specName != "" {
+			branchName = fmt.Sprintf("alphie-%s-%s", specName, sessionID)
+		} else {
+			// Fallback to session-based naming if no spec name provided
+			branchName = fmt.Sprintf("alphie-session-%s", sessionID)
+		}
 	}
 
 	return &SessionBranchManager{
@@ -38,10 +44,16 @@ func NewSessionBranchManager(sessionID, repoPath string, greenfield bool) *Sessi
 }
 
 // NewSessionBranchManagerWithRunner creates a new SessionBranchManager with a custom git runner (for testing).
-func NewSessionBranchManagerWithRunner(sessionID, repoPath string, greenfield bool, runner git.Runner) *SessionBranchManager {
+// Branch name format: alphie-{spec-name}-{timestamp}
+func NewSessionBranchManagerWithRunner(sessionID, repoPath string, greenfield bool, specName string, runner git.Runner) *SessionBranchManager {
 	branchName := ""
 	if !greenfield {
-		branchName = fmt.Sprintf("session-%s", sessionID)
+		if specName != "" {
+			branchName = fmt.Sprintf("alphie-%s-%s", specName, sessionID)
+		} else {
+			// Fallback to session-based naming if no spec name provided
+			branchName = fmt.Sprintf("alphie-session-%s", sessionID)
+		}
 	}
 
 	return &SessionBranchManager{

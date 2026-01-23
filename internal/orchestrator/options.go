@@ -29,6 +29,7 @@ type orchestratorOptions struct {
 	maxAgents            int
 	policyConfig         *policy.Config
 	greenfield           bool
+	specName             string // For branch naming: alphie-{spec-name}-{timestamp}
 	decomposerClaude     agent.ClaudeRunner
 	mergerClaude         agent.ClaudeRunner
 	secondReviewerClaude agent.ClaudeRunner
@@ -60,6 +61,11 @@ func WithPolicy(p *policy.Config) Option {
 // WithGreenfield sets greenfield mode (new project, no session branch).
 func WithGreenfield(b bool) Option {
 	return func(o *orchestratorOptions) { o.greenfield = b }
+}
+
+// WithSpecName sets the spec name for branch naming (alphie-{spec-name}-{timestamp}).
+func WithSpecName(name string) Option {
+	return func(o *orchestratorOptions) { o.specName = name }
 }
 
 // WithDecomposerClaude sets the Claude runner for task decomposition.
@@ -141,6 +147,7 @@ func toOrchestratorConfig(req RequiredConfig, opts *orchestratorOptions) Orchest
 		MaxAgents:            opts.maxAgents,
 		Policy:               opts.policyConfig,
 		Greenfield:           opts.greenfield,
+		SpecName:             opts.specName,
 		DecomposerClaude:     opts.decomposerClaude,
 		MergerClaude:         opts.mergerClaude,
 		SecondReviewerClaude: opts.secondReviewerClaude,
