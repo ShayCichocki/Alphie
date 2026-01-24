@@ -8,14 +8,19 @@ import (
 	"github.com/ShayCichocki/alphie/internal/verification"
 )
 
+// ValidatorInterface defines the interface for validators that can be adapted.
+type ValidatorInterface interface {
+	Validate(ctx context.Context, input ValidationInput) (*ValidationResult, error)
+}
+
 // ValidatorAdapter adapts the Validator to implement agent.TaskValidator interface.
 // This breaks the import cycle between agent and validation packages.
 type ValidatorAdapter struct {
-	validator *Validator
+	validator ValidatorInterface
 }
 
 // NewValidatorAdapter creates a new adapter that implements agent.TaskValidator.
-func NewValidatorAdapter(validator *Validator) *ValidatorAdapter {
+func NewValidatorAdapter(validator ValidatorInterface) *ValidatorAdapter {
 	return &ValidatorAdapter{
 		validator: validator,
 	}
