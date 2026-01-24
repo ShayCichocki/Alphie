@@ -422,7 +422,7 @@ func (o *Orchestrator) SetMergeConflict(taskID string, files []string) {
 	o.mergeConflictTask = taskID
 	o.mergeConflictFiles = files
 
-	o.logger.Log("MERGE_CONFLICT", "Blocking all scheduling - conflict in task %s (%d files)", taskID, len(files))
+	o.logger.Log("MERGE_CONFLICT: Blocking all scheduling - conflict in task %s (%d files)", taskID, len(files))
 }
 
 // HasMergeConflict returns true if there is an active merge conflict blocking scheduling.
@@ -441,7 +441,7 @@ func (o *Orchestrator) ClearMergeConflict() {
 		return
 	}
 
-	o.logger.Log("MERGE_RESOLVED", "Clearing merge conflict flag - resuming scheduling")
+	o.logger.Log("MERGE_RESOLVED: Clearing merge conflict flag - resuming scheduling")
 	o.hasMergeConflict = false
 	o.mergeConflictTask = ""
 	o.mergeConflictFiles = nil

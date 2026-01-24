@@ -121,7 +121,7 @@ func (h *EscalationHandler) RequestEscalation(ctx context.Context, req *Escalati
 
 	// Log escalation
 	if h.orchestrator.logger != nil {
-		h.orchestrator.logger.Log("ESCALATION", "Task %s needs escalation after %d attempts: %s",
+		h.orchestrator.logger.Log("ESCALATION: Task %s needs escalation after %d attempts: %s",
 			req.Task.ID, req.Attempts, req.FailureReason)
 	}
 
@@ -135,13 +135,13 @@ func (h *EscalationHandler) RequestEscalation(ctx context.Context, req *Escalati
 	case response := <-h.responseCh:
 		// Log user's choice
 		if h.orchestrator.logger != nil {
-			h.orchestrator.logger.Log("ESCALATION", "User chose action: %s for task %s", response.Action, req.Task.ID)
+			h.orchestrator.logger.Log("ESCALATION: User chose action: %s for task %s", response.Action, req.Task.ID)
 		}
 		return response, nil
 	case <-time.After(h.escalationTimeout):
 		// Timeout - default to abort for safety
 		if h.orchestrator.logger != nil {
-			h.orchestrator.logger.Log("ESCALATION", "Timeout after %v - defaulting to abort", h.escalationTimeout)
+			h.orchestrator.logger.Log("ESCALATION: Timeout after %v - defaulting to abort", h.escalationTimeout)
 		}
 		return &EscalationResponse{
 			Action:    EscalationAbort,
@@ -235,7 +235,7 @@ func (h *EscalationHandler) HandleEscalationAction(
 // handleRetry resets the task for retry.
 func (h *EscalationHandler) handleRetry(task *models.Task, result *agent.ExecutionResult) error {
 	if h.orchestrator.logger != nil {
-		h.orchestrator.logger.Log("ESCALATION", "Retrying task %s", task.ID)
+		h.orchestrator.logger.Log("ESCALATION: Retrying task %s", task.ID)
 	}
 
 	// Reset task state for retry
@@ -259,7 +259,7 @@ func (h *EscalationHandler) handleRetry(task *models.Task, result *agent.Executi
 // handleSkip marks the task as skipped and blocks its dependents.
 func (h *EscalationHandler) handleSkip(task *models.Task) error {
 	if h.orchestrator.logger != nil {
-		h.orchestrator.logger.Log("ESCALATION", "Skipping task %s and its dependents", task.ID)
+		h.orchestrator.logger.Log("ESCALATION: Skipping task %s and its dependents", task.ID)
 	}
 
 	// Mark task as blocked/skipped
@@ -276,7 +276,7 @@ func (h *EscalationHandler) handleSkip(task *models.Task) error {
 			depTask.BlockedReason = fmt.Sprintf("dependency_skipped:%s", task.ID)
 
 			if h.orchestrator.logger != nil {
-				h.orchestrator.logger.Log("ESCALATION", "Blocking dependent task %s", depID)
+				h.orchestrator.logger.Log("ESCALATION: Blocking dependent task %s", depID)
 			}
 		}
 	}
@@ -297,7 +297,7 @@ func (h *EscalationHandler) handleSkip(task *models.Task) error {
 // handleAbort stops the entire orchestrator execution.
 func (h *EscalationHandler) handleAbort(task *models.Task) error {
 	if h.orchestrator.logger != nil {
-		h.orchestrator.logger.Log("ESCALATION", "User chose to abort execution for task %s", task.ID)
+		h.orchestrator.logger.Log("ESCALATION: User chose to abort execution for task %s", task.ID)
 	}
 
 	// Mark task as failed
@@ -321,7 +321,7 @@ func (h *EscalationHandler) handleAbort(task *models.Task) error {
 // handleManualFix waits for user to manually fix the code, then validates and merges.
 func (h *EscalationHandler) handleManualFix(ctx context.Context, task *models.Task, result *agent.ExecutionResult) error {
 	if h.orchestrator.logger != nil {
-		h.orchestrator.logger.Log("ESCALATION", "Waiting for manual fix in worktree: %s", result.WorktreePath)
+		h.orchestrator.logger.Log("ESCALATION: Waiting for manual fix in worktree: %s", result.WorktreePath)
 	}
 
 	// Emit event telling user where to make changes
@@ -348,7 +348,7 @@ func (h *EscalationHandler) handleManualFix(ctx context.Context, task *models.Ta
 	task.Error = ""
 
 	if h.orchestrator.logger != nil {
-		h.orchestrator.logger.Log("ESCALATION", "Manual fix workflow initiated for task %s", task.ID)
+		h.orchestrator.logger.Log("ESCALATION: Manual fix workflow initiated for task %s", task.ID)
 	}
 
 	return nil

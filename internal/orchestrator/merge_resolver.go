@@ -60,7 +60,7 @@ func (mr *MergeResolverAgent) Resolve(ctx context.Context, req *MergeRequest, co
 		if err != nil {
 			// Non-fatal - continue with basic prompt
 			if mr.orchestrator != nil && mr.orchestrator.logger != nil {
-				mr.orchestrator.logger.Log("merge_resolver", "Failed to build comprehensive context: %v", err)
+				mr.orchestrator.logger.Log("merge_resolver: Failed to build comprehensive context: %v", err)
 			}
 		}
 	}

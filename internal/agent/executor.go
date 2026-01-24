@@ -66,6 +66,31 @@ func (r *ExecutionResult) IsVerified() bool {
 	return r.VerifyPassed == nil || *r.VerifyPassed
 }
 
+// TaskValidator defines the interface for validating task implementations.
+// This interface allows the Executor to validate without importing the validation package directly.
+type TaskValidator interface {
+	// Validate runs 4-layer validation and returns the result.
+	Validate(ctx context.Context, input TaskValidationInput) (*TaskValidationResult, error)
+}
+
+// TaskValidationInput contains information needed for task validation.
+type TaskValidationInput struct {
+	RepoPath             string
+	TaskTitle            string
+	TaskDescription      string
+	VerificationContract interface{} // verification.VerificationContract
+	Implementation       string
+	ModifiedFiles        []string
+	AcceptanceCriteria   []string
+}
+
+// TaskValidationResult contains the outcome of task validation.
+type TaskValidationResult struct {
+	AllPassed     bool
+	Summary       string
+	FailureReason string
+}
+
 // Executor wires together worktree creation, API execution,
 // stream parsing, token tracking, and cleanup for single-agent task execution.
 type Executor struct {
@@ -77,6 +102,9 @@ type Executor struct {
 
 	// Runner factory for creating ClaudeRunner instances (API-based)
 	runnerFactory ClaudeRunnerFactory
+
+	// validator performs 4-layer validation after task completion (optional)
+	validator TaskValidator
 }
 
 // ExecutorConfig contains configuration options for the Executor.
@@ -100,6 +128,8 @@ type ExecutorConfig struct {
 	TokenTracker TokenAggregator
 	// AgentManager is the agent lifecycle manager. If nil, NewManager() is used.
 	AgentManager AgentLifecycle
+	// Validator performs 4-layer validation after task completion. If nil, validation is skipped.
+	Validator TaskValidator
 }
 
 // NewExecutor creates a new Executor with the given configuration.
@@ -142,6 +172,7 @@ func NewExecutor(cfg ExecutorConfig) (*Executor, error) {
 		model:         model,
 		taskTimeout:   taskTimeout,
 		runnerFactory: cfg.RunnerFactory,
+		validator:     cfg.Validator,
 	}, nil
 }
 
@@ -415,20 +446,57 @@ func (e *Executor) ExecuteWithOptions(ctx context.Context, task *models.Task, ti
 // 2. Build + test suite
 // 3. Semantic validation (Claude reviews against intent)
 // 4. Code review (detailed quality assessment)
-//
-// Note: This is currently a placeholder that will be fully implemented when the
-// validation package integration is complete. For now, we rely on the existing
-// verification contract and quality gates system.
 func (e *Executor) run4LayerValidation(ctx context.Context, result *ExecutionResult, task *models.Task, worktreePath string, opts *ExecuteOptions) {
-	// TODO: Integrate internal/validation package here
-	// This requires:
-	// 1. Creating a Validator instance with all 4 layers
-	// 2. Building ValidationInput with task details and implementation diff
-	// 3. Running validator.Validate(ctx, input)
-	// 4. Updating result.VerifyPassed based on validation outcome
-	// 5. Setting result.VerifySummary with validation feedback
-	//
-	// For now, we rely on the existing verification system (contracts + gates).
-	// The validation package exists and is ready, but needs BuildTester implementation
-	// and integration plumbing to avoid breaking existing functionality.
+	// Skip if no validator configured
+	if e.validator == nil {
+		return
+	}
+
+	// Skip if execution failed
+	if !result.Success {
+		return
+	}
+
+	// Get repo path for validation
+	repoPath := e.worktreeMgr.RepoPath()
+
+	// Get implementation diff and modified files
+	implementation := e.getImplementationDiff(worktreePath)
+	modifiedFiles := e.getModifiedFiles(worktreePath)
+
+	// Convert acceptance criteria string to slice
+	var acceptanceCriteria []string
+	if task.AcceptanceCriteria != "" {
+		acceptanceCriteria = strings.Split(task.AcceptanceCriteria, "\n")
+	}
+
+	// Build validation input
+	validationInput := TaskValidationInput{
+		RepoPath:             repoPath,
+		TaskTitle:            task.Title,
+		TaskDescription:      task.Description,
+		VerificationContract: nil, // Task doesn't have contract field yet
+		Implementation:       implementation,
+		ModifiedFiles:        modifiedFiles,
+		AcceptanceCriteria:   acceptanceCriteria,
+	}
+
+	// Run validation
+	validationResult, err := e.validator.Validate(ctx, validationInput)
+	if err != nil {
+		result.VerifySummary = fmt.Sprintf("Validation error: %v", err)
+		passed := false
+		result.VerifyPassed = &passed
+		return
+	}
+
+	// Update result with validation outcome
+	result.VerifyPassed = &validationResult.AllPassed
+	result.VerifySummary = validationResult.Summary
+
+	// If validation failed, mark the entire execution as failed
+	if !validationResult.AllPassed {
+		result.Success = false
+		result.Error = validationResult.FailureReason
+	}
 }

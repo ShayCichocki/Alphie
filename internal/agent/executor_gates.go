@@ -69,6 +69,7 @@ func (e *Executor) evaluateGatesWithBaseline(gateResults []*GateOutput, baseline
 // shouldRunRalphLoop determines if the Ralph self-critique loop should run for the given tierIgnored.
 // Scout and Quick tiers skip the loop (simple tasks don't need self-critique).
 // Builder and Architect tiers run the loop for quality improvement.
+// TODO: Implement proper tier checking when tier types are integrated
 func (e *Executor) shouldRunRalphLoop(tierIgnored interface{}) bool {
-	return tierIgnored == nil || tierIgnored == nil
+	return true // Default to enabled until tier logic is implemented
 }

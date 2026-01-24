@@ -23,6 +23,13 @@ type ImplementState struct {
 	BlockedQuestions []string
 	// ActiveWorkers maps agent ID -> task info for debugging
 	ActiveWorkers map[string]WorkerInfo
+	// Escalation fields
+	IsEscalating       bool
+	EscalationTaskID   string
+	EscalationTask     string
+	EscalationReason   string
+	EscalationAttempts int
+	EscalationLogFile  string
 }
 
 // WorkerInfo contains information about an active worker for display.
@@ -219,6 +226,73 @@ func (v *ImplementView) View() string {
 		}
 	}
 
+	// Escalation prompt (if escalating)
+	if v.state.IsEscalating {
+		b.WriteString("\n\n")
+		b.WriteString(v.renderEscalationPrompt())
+	}
+
+	return b.String()
+}
+
+// renderEscalationPrompt renders the escalation prompt UI.
+func (v *ImplementView) renderEscalationPrompt() string {
+	var b strings.Builder
+
+	// Header
+	header := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("214")).
+		Render("⚠ TASK ESCALATION REQUIRED ⚠")
+	b.WriteString(header)
+	b.WriteString("\n\n")
+
+	// Task info
+	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("Task: "))
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render(v.state.EscalationTask))
+	b.WriteString("\n")
+
+	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("Attempts: "))
+	b.WriteString(fmt.Sprintf("%d", v.state.EscalationAttempts))
+	b.WriteString("\n")
+
+	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("Reason: "))
+	b.WriteString(v.state.EscalationReason)
+	b.WriteString("\n")
+
+	if v.state.EscalationLogFile != "" {
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Log: "))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(v.state.EscalationLogFile))
+		b.WriteString("\n")
+	}
+
+	// Options
+	b.WriteString("\n")
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Choose an action:"))
+	b.WriteString("\n\n")
+
+	keyStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("15")).
+		Background(lipgloss.Color("214")).
+		Bold(true).
+		Padding(0, 1)
+
+	b.WriteString("  ")
+	b.WriteString(keyStyle.Render("r"))
+	b.WriteString("  Retry - Run the task again with same configuration\n")
+
+	b.WriteString("  ")
+	b.WriteString(keyStyle.Render("s"))
+	b.WriteString("  Skip - Skip this task and its dependents, continue with remaining work\n")
+
+	b.WriteString("  ")
+	b.WriteString(keyStyle.Render("a"))
+	b.WriteString("  Abort - Stop the entire execution\n")
+
+	b.WriteString("  ")
+	b.WriteString(keyStyle.Render("m"))
+	b.WriteString("  Manual Fix - Pause execution, manually fix the code, then continue\n")
+
 	return b.String()
 }
 
@@ -273,11 +347,16 @@ type ImplementApp struct {
 	done     bool
 	err      error
 
+	// Escalation handling
+	escalationHandler EscalationResponseHandler
+
 	// Styles
 	logStyle     lipgloss.Style
 	logTimeStyle lipgloss.Style
 	errorStyle   lipgloss.Style
 	doneStyle    lipgloss.Style
+	escalationStyle lipgloss.Style
+	escalationKeyStyle lipgloss.Style
 }
 
 // NewImplementApp creates a new ImplementApp instance.
@@ -299,7 +378,25 @@ func NewImplementApp() *ImplementApp {
 		doneStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("34")).
 			Bold(true),
+
+		escalationStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")).
+			Bold(true).
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("214")).
+			Padding(1, 2),
+
+		escalationKeyStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("15")).
+			Background(lipgloss.Color("214")).
+			Bold(true).
+			Padding(0, 1),
 	}
+}
+
+// SetEscalationHandler sets the callback for responding to escalations.
+func (a *ImplementApp) SetEscalationHandler(handler EscalationResponseHandler) {
+	a.escalationHandler = handler
 }
 
 // Init implements tea.Model.
@@ -311,6 +408,26 @@ func (a *ImplementApp) Init() tea.Cmd {
 func (a *ImplementApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// If escalating, handle escalation keypresses
+		currentState := a.view.state
+		if currentState.IsEscalating {
+			switch msg.String() {
+			case "r":
+				a.handleEscalationResponse("retry")
+				return a, nil
+			case "s":
+				a.handleEscalationResponse("skip")
+				return a, nil
+			case "a":
+				a.handleEscalationResponse("abort")
+				return a, nil
+			case "m":
+				a.handleEscalationResponse("manual")
+				return a, nil
+			}
+		}
+
+		// Normal keypresses
 		switch msg.String() {
 		case "q", "ctrl+c":
 			a.quitting = true
@@ -332,6 +449,24 @@ func (a *ImplementApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Message:   msg.Message,
 		})
 
+	case EscalationMsg:
+		// Update state to show escalation prompt
+		currentState := a.view.state
+		currentState.IsEscalating = true
+		currentState.EscalationTaskID = msg.TaskID
+		currentState.EscalationTask = msg.TaskTitle
+		currentState.EscalationReason = msg.Reason
+		currentState.EscalationAttempts = msg.Attempts
+		currentState.EscalationLogFile = msg.LogFile
+		a.view.SetState(currentState)
+
+		// Log escalation
+		a.logs = append(a.logs, ImplementLogEntry{
+			Timestamp: time.Now(),
+			Phase:     "ESCALATION",
+			Message:   fmt.Sprintf("Task '%s' needs escalation: %s", msg.TaskTitle, msg.Reason),
+		})
+
 	case ImplementDoneMsg:
 		a.done = true
 		if msg.Err != nil {
@@ -341,6 +476,47 @@ func (a *ImplementApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return a, nil
+}
+
+// handleEscalationResponse processes the user's escalation choice.
+func (a *ImplementApp) handleEscalationResponse(action string) {
+	if a.escalationHandler == nil {
+		return
+	}
+
+	// Send response via handler
+	if err := a.escalationHandler(action); err != nil {
+		// Log error but continue
+		a.logs = append(a.logs, ImplementLogEntry{
+			Timestamp: time.Now(),
+			Phase:     "ESCALATION",
+			Message:   fmt.Sprintf("Error sending escalation response: %v", err),
+		})
+		return
+	}
+
+	// Clear escalation state
+	currentState := a.view.state
+	currentState.IsEscalating = false
+	currentState.EscalationTaskID = ""
+	currentState.EscalationTask = ""
+	currentState.EscalationReason = ""
+	currentState.EscalationAttempts = 0
+	currentState.EscalationLogFile = ""
+	a.view.SetState(currentState)
+
+	// Log response
+	actionName := map[string]string{
+		"retry":  "Retry",
+		"skip":   "Skip",
+		"abort":  "Abort",
+		"manual": "Manual Fix",
+	}[action]
+	a.logs = append(a.logs, ImplementLogEntry{
+		Timestamp: time.Now(),
+		Phase:     "ESCALATION",
+		Message:   fmt.Sprintf("User chose: %s", actionName),
+	})
 }
 
 // View implements tea.Model.
@@ -428,6 +604,19 @@ type ImplementDoneMsg struct {
 	Err error
 }
 
+// EscalationMsg is sent when a task needs user escalation.
+type EscalationMsg struct {
+	TaskID   string
+	TaskTitle string
+	Reason   string
+	Attempts int
+	LogFile  string
+}
+
+// EscalationResponseHandler is a callback for sending escalation responses.
+// It takes the chosen action (retry/skip/abort/manual) and returns an error if the response failed.
+type EscalationResponseHandler func(action string) error
+
 // NewImplementProgram creates a new Bubbletea program for the implement TUI.
 func NewImplementProgram() (*tea.Program, *ImplementApp) {
 	app := NewImplementApp()
@@ -435,12 +624,18 @@ func NewImplementProgram() (*tea.Program, *ImplementApp) {
 	return p, app
 }
 
-// TODO: Escalation UI Support
-// The escalation handler is fully integrated into the orchestrator and emits
-// EventTaskEscalation events. To complete the TUI integration:
-// 1. Add escalation fields to ImplementState (isEscalating bool, escalationTask, etc.)
-// 2. Handle EventTaskEscalation in the main TUI update loop
-// 3. Display escalation prompt with options when escalating
-// 4. Capture user keypress (r=retry, s=skip, a=abort, m=manual)
-// 5. Send response back to orchestrator via RespondToEscalation()
-// For now, escalation works but requires CLI/API interaction rather than TUI prompts.
+// Escalation UI implementation complete:
+// - ImplementState has escalation fields (IsEscalating, EscalationTask, etc.)
+// - EscalationMsg is handled in Update() method
+// - Escalation prompt displayed in View() with r/s/a/m options
+// - User keypresses captured and sent via EscalationResponseHandler callback
+// - The orchestrator should set the handler using SetEscalationHandler()
+//
+// Integration example:
+//   tuiApp.SetEscalationHandler(func(action string) error {
+//       response := &orchestrator.EscalationResponse{
+//           Action: orchestrator.EscalationAction(action),
+//           Timestamp: time.Now(),
+//       }
+//       return orchestrator.escalationHandler.RespondToEscalation(response)
+//   })

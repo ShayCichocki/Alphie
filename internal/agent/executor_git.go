@@ -71,6 +71,25 @@ func (e *Executor) getModifiedFiles(workDir string) []string {
 	return result
 }
 
+// getImplementationDiff returns the diff of changes made in the worktree.
+// This is used for validation to show what code was added/modified.
+func (e *Executor) getImplementationDiff(workDir string) string {
+	// Get diff of all changes
+	cmd := exec.Command("git", "diff", "HEAD")
+	cmd.Dir = workDir
+	output, err := cmd.Output()
+	if err != nil {
+		// If that fails, try getting staged changes
+		cmd = exec.Command("git", "diff", "--cached")
+		cmd.Dir = workDir
+		output, err = cmd.Output()
+		if err != nil {
+			return ""
+		}
+	}
+	return string(output)
+}
+
 // writeLogFile writes the execution log to the specified file.
 func (e *Executor) writeLogFile(logFile string, task *models.Task, tierIgnored interface{}, result *ExecutionResult, startTime time.Time) {
 	var logContent strings.Builder
