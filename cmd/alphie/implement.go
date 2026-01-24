@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +16,8 @@ import (
 	"github.com/ShayCichocki/alphie/internal/finalverify"
 	"github.com/ShayCichocki/alphie/internal/orchestrator"
 	"github.com/ShayCichocki/alphie/internal/tui"
+	"github.com/ShayCichocki/alphie/internal/validation"
+	"github.com/ShayCichocki/alphie/internal/verification"
 	"github.com/spf13/cobra"
 )
 
@@ -133,7 +136,28 @@ func runImplement(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Create TUI program for progress visualization
-	tuiProgram, _ := tui.NewImplementProgram()
+	tuiProgram, tuiApp := tui.NewImplementProgram()
+
+	// Create escalation handler that will be wired to the orchestrator
+	// The orchestrator reference will be updated on each iteration
+	var currentOrch *orchestrator.Orchestrator
+	var orchMu sync.RWMutex
+
+	tuiApp.SetEscalationHandler(func(action string) error {
+		orchMu.RLock()
+		orch := currentOrch
+		orchMu.RUnlock()
+
+		if orch == nil {
+			return fmt.Errorf("no orchestrator available")
+		}
+
+		response := &orchestrator.EscalationResponse{
+			Action:    orchestrator.EscalationAction(action),
+			Timestamp: time.Now(),
+		}
+		return orch.RespondToEscalation(response)
+	})
 
 	// Create context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -141,7 +165,7 @@ func runImplement(cmd *cobra.Command, args []string) error {
 
 	// Run implementation loop in background
 	go func() {
-		err := runImplementationLoop(ctx, cfg, tuiProgram)
+		err := runImplementationLoop(ctx, cfg, tuiProgram, &currentOrch, &orchMu)
 		tuiProgram.Send(tui.ImplementDoneMsg{Err: err})
 	}()
 
@@ -160,7 +184,7 @@ func runImplement(cmd *cobra.Command, args []string) error {
 // 3. Orchestrates through tasks
 // 4. Runs final verification
 // 5. Repeats if gaps found
-func runImplementationLoop(ctx context.Context, cfg implementConfig, tuiProgram interface{ Send(tea.Msg) }) error {
+func runImplementationLoop(ctx context.Context, cfg implementConfig, tuiProgram interface{ Send(tea.Msg) }, currentOrch **orchestrator.Orchestrator, orchMu *sync.RWMutex) error {
 	// Progress callback for TUI updates
 	progressCallback := func(event architect.ProgressEvent) {
 		phaseStr := string(event.Phase)
@@ -319,6 +343,37 @@ func runImplementationLoop(ctx context.Context, cfg implementConfig, tuiProgram 
 			return fmt.Errorf("create orchestrator: %w", err)
 		}
 
+		// Update current orchestrator reference for escalation handler
+		orchMu.Lock()
+		*currentOrch = orch
+		orchMu.Unlock()
+
+		// Subscribe to orchestrator events for escalation handling
+		eventsCh := orch.Events()
+		eventsDone := make(chan struct{})
+		go func() {
+			defer close(eventsDone)
+			for event := range eventsCh {
+				// Route escalation events to TUI
+				if event.Type == orchestrator.EventTaskEscalation {
+					attempts := 0
+					if event.Metadata != nil {
+						if v, ok := event.Metadata["attempts"].(int); ok {
+							attempts = v
+						}
+					}
+
+					tuiProgram.Send(tui.EscalationMsg{
+						TaskID:    event.TaskID,
+						TaskTitle: event.TaskTitle,
+						Reason:    event.Message,
+						Attempts:  attempts,
+						LogFile:   event.LogFile,
+					})
+				}
+			}
+		}()
+
 		// Convert gaps to request string for decomposition
 		request := buildRequestFromGaps(gapReport.Gaps, spec)
 
@@ -329,6 +384,9 @@ func runImplementationLoop(ctx context.Context, cfg implementConfig, tuiProgram 
 
 		// Stop orchestrator
 		orch.Stop()
+
+		// Wait for event processing to complete
+		<-eventsDone
 
 		// Emit iteration complete
 		progressCallback(architect.ProgressEvent{
@@ -385,11 +443,15 @@ func runFinalVerification(ctx context.Context, cfg implementConfig, spec *archit
 
 // createOrchestrator creates an orchestrator instance for the current iteration.
 func createOrchestrator(cfg implementConfig, progressCallback architect.ProgressCallback) (*orchestrator.Orchestrator, error) {
+	// Create 4-layer validator for task validation
+	validator := createValidator(cfg.repoPath, cfg.runnerFactory)
+
 	// Create executor
 	executor, err := agent.NewExecutor(agent.ExecutorConfig{
 		RepoPath:      cfg.repoPath,
 		Model:         cfg.model,
 		RunnerFactory: cfg.runnerFactory,
+		Validator:     validator,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create executor: %w", err)
@@ -419,6 +481,26 @@ func createOrchestrator(cfg implementConfig, progressCallback architect.Progress
 	)
 
 	return orch, nil
+}
+
+// createValidator creates a 4-layer validator for task validation.
+func createValidator(repoPath string, runnerFactory agent.ClaudeRunnerFactory) agent.TaskValidator {
+	// Create contract verifier (Layer 1)
+	contractVerifier := verification.NewContractRunner(repoPath)
+
+	// Create build tester with auto-detection (Layer 2)
+	buildTester, err := validation.NewAutoBuildTester(repoPath, 5*time.Minute)
+	if err != nil {
+		// If build tester creation fails, use nil (validation will skip build tests)
+		fmt.Fprintf(os.Stderr, "Warning: Failed to create build tester: %v\n", err)
+		buildTester = nil
+	}
+
+	// Create validator with all 4 layers
+	validator := validation.NewValidator(contractVerifier, buildTester, runnerFactory)
+
+	// Wrap in adapter to implement agent.TaskValidator interface
+	return validation.NewValidatorAdapter(validator)
 }
 
 // buildRequestFromGaps converts gap report into a request string for orchestrator.

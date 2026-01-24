@@ -9,6 +9,8 @@ import (
 
 	"github.com/ShayCichocki/alphie/internal/agent"
 	"github.com/ShayCichocki/alphie/internal/orchestrator"
+	"github.com/ShayCichocki/alphie/internal/validation"
+	"github.com/ShayCichocki/alphie/internal/verification"
 )
 
 // ProgressPhase represents the current phase of the implementation loop.
@@ -417,11 +419,15 @@ func (c *Controller) executeEpic(ctx context.Context, epicID string, agents int)
 
 // createOrchestrator creates a new orchestrator instance for epic execution.
 func (c *Controller) createOrchestrator(epicID string, agents int) (*orchestrator.Orchestrator, error) {
+	// Create 4-layer validator for task validation
+	validator := c.createValidator()
+
 	// Create executor
 	executor, err := agent.NewExecutor(agent.ExecutorConfig{
 		RepoPath:      c.RepoPath,
 		Model:         "sonnet",
 		RunnerFactory: c.runnerFactory,
+		Validator:     validator,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create executor: %w", err)
@@ -446,6 +452,27 @@ func (c *Controller) createOrchestrator(epicID string, agents int) (*orchestrato
 	)
 
 	return orch, nil
+}
+
+// createValidator creates a 4-layer validator for task validation.
+// The validator runs after task execution to ensure quality standards are met.
+func (c *Controller) createValidator() agent.TaskValidator {
+	// Create contract verifier (Layer 1)
+	contractVerifier := verification.NewContractRunner(c.RepoPath)
+
+	// Create build tester with auto-detection (Layer 2)
+	buildTester, err := validation.NewAutoBuildTester(c.RepoPath, 5*time.Minute)
+	if err != nil {
+		// If build tester creation fails, log but use nil (validation will skip build tests)
+		log.Printf("[validator] Failed to create build tester: %v", err)
+		buildTester = nil
+	}
+
+	// Create validator with all 4 layers
+	validator := validation.NewValidator(contractVerifier, buildTester, c.runnerFactory)
+
+	// Wrap in adapter to implement agent.TaskValidator interface
+	return validation.NewValidatorAdapter(validator)
 }
 
 // handleOrchestratorEvent converts orchestrator events to progress events.
@@ -522,6 +549,20 @@ func (c *Controller) handleOrchestratorEvent(event orchestrator.OrchestratorEven
 				ActiveWorkers:    c.cloneActiveWorkers(),
 			})
 		}
+	case orchestrator.EventTaskEscalation:
+		// Emit escalation event as progress event
+		c.emitProgress(ProgressEvent{
+			Phase:            PhaseExecuting,
+			Iteration:        c.currentIteration,
+			MaxIterations:    c.MaxIterations,
+			FeaturesComplete: c.currentFeaturesComplete,
+			FeaturesTotal:    c.currentFeaturesTotal,
+			Message:          fmt.Sprintf("Escalation: %s - %s", event.TaskTitle, event.Message),
+			Cost:             event.Cost,
+			WorkersRunning:   event.WorkersRunning,
+			WorkersBlocked:   event.WorkersBlocked,
+			ActiveWorkers:    c.cloneActiveWorkers(),
+		})
 	}
 }
 

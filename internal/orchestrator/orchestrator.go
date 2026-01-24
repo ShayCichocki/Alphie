@@ -2,6 +2,7 @@
 package orchestrator
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -452,4 +453,13 @@ func (o *Orchestrator) ClearMergeConflict() {
 	case o.scheduler.trigger <- struct{}{}:
 	default:
 	}
+}
+
+// RespondToEscalation forwards an escalation response to the escalation handler.
+// This is called by the TUI or CLI when the user makes a choice during escalation.
+func (o *Orchestrator) RespondToEscalation(response *EscalationResponse) error {
+	if o.escalationHdlr == nil {
+		return fmt.Errorf("escalation handler not initialized")
+	}
+	return o.escalationHdlr.RespondToEscalation(response)
 }
