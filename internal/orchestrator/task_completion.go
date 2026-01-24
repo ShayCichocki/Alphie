@@ -81,6 +81,9 @@ func (o *Orchestrator) handleTaskCompletion(ctx context.Context, taskID string, 
 		}
 	}
 
+	// Increment execution count before checking escalation
+	task.ExecutionCount++
+
 	// Check if escalation is needed for failed tasks
 	if o.escalationHdlr != nil && o.escalationHdlr.NeedsEscalation(task, result) {
 		return o.handleTaskEscalation(ctx, task, result, startTime)
@@ -298,9 +301,8 @@ func (o *Orchestrator) handleSuccessfulTask(ctx context.Context, task *models.Ta
 }
 
 // handleFailedTask handles a task that failed execution.
+// Note: ExecutionCount is incremented by the caller before this is called.
 func (o *Orchestrator) handleFailedTask(task *models.Task, result *agent.ExecutionResult) {
-	task.ExecutionCount++
-
 	if o.overrideGate != nil && o.config.Tier == nil {
 		if o.overrideGate.CanAskQuestionWithCount(task.ExecutionCount) {
 			log.Printf("[orchestrator] task %s has %d failed attempts, Scout can now ask questions", task.ID, task.ExecutionCount)

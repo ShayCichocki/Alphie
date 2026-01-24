@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -44,6 +45,7 @@ func (d *Decomposer) Decompose(ctx context.Context, request string) ([]*models.T
 	}
 
 	var response strings.Builder
+	var resultCount int
 	for event := range d.claude.Output() {
 		select {
 		case <-ctx.Done():
@@ -54,9 +56,12 @@ func (d *Decomposer) Decompose(ctx context.Context, request string) ([]*models.T
 
 		switch event.Type {
 		case agent.StreamEventResult:
-			response.WriteString(event.Message)
-		case agent.StreamEventAssistant:
-			response.WriteString(event.Message)
+			// Use final result only (avoids duplication with streaming chunks)
+			resultCount++
+			// Only use the FIRST result event to avoid duplication from multi-turn conversations
+			if resultCount == 1 {
+				response.WriteString(event.Message)
+			}
 		case agent.StreamEventError:
 			return nil, fmt.Errorf("claude error: %s", event.Error)
 		}
@@ -66,7 +71,14 @@ func (d *Decomposer) Decompose(ctx context.Context, request string) ([]*models.T
 		return nil, fmt.Errorf("wait for claude: %w", err)
 	}
 
-	tasks, err := ParseResponse(response.String())
+	// Debug: save response to file for troubleshooting
+	responseStr := response.String()
+	if debugFile, err := os.Create("/tmp/alphie-decompose-response.txt"); err == nil {
+		debugFile.WriteString(responseStr)
+		debugFile.Close()
+	}
+
+	tasks, err := ParseResponse(responseStr)
 	if err != nil {
 		return nil, fmt.Errorf("parse decomposition response: %w", err)
 	}
@@ -136,7 +148,12 @@ func ParseResponse(response string) ([]*models.Task, error) {
 	jsonStart := strings.Index(response, "[")
 	jsonEnd := strings.LastIndex(response, "]")
 	if jsonStart == -1 || jsonEnd == -1 || jsonEnd <= jsonStart {
-		return nil, fmt.Errorf("no valid JSON array found in response")
+		// Save failed response for debugging
+		responsePreview := response
+		if len(responsePreview) > 500 {
+			responsePreview = responsePreview[:500] + "... (truncated)"
+		}
+		return nil, fmt.Errorf("no valid JSON array found in response (got %d chars): %q", len(response), responsePreview)
 	}
 	jsonStr := response[jsonStart : jsonEnd+1]
 
