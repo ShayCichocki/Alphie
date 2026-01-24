@@ -357,18 +357,30 @@ func runImplementationLoop(ctx context.Context, cfg implementConfig, tuiProgram 
 				// Route escalation events to TUI
 				if event.Type == orchestrator.EventTaskEscalation {
 					attempts := 0
+					validationSummary := ""
 					if event.Metadata != nil {
 						if v, ok := event.Metadata["attempts"].(int); ok {
 							attempts = v
 						}
+						if v, ok := event.Metadata["validation_summary"].(string); ok {
+							validationSummary = v
+						}
+					}
+
+					// Get error details
+					errorDetails := ""
+					if event.Error != nil {
+						errorDetails = event.Error.Error()
 					}
 
 					tuiProgram.Send(tui.EscalationMsg{
-						TaskID:    event.TaskID,
-						TaskTitle: event.TaskTitle,
-						Reason:    event.Message,
-						Attempts:  attempts,
-						LogFile:   event.LogFile,
+						TaskID:            event.TaskID,
+						TaskTitle:         event.TaskTitle,
+						Reason:            event.Message,
+						Attempts:          attempts,
+						LogFile:           event.LogFile,
+						ErrorDetails:      errorDetails,
+						ValidationSummary: validationSummary,
 					})
 				}
 			}

@@ -29,7 +29,9 @@ type ImplementState struct {
 	EscalationTask     string
 	EscalationReason   string
 	EscalationAttempts int
-	EscalationLogFile  string
+	EscalationLogFile       string
+	EscalationErrorDetails  string // Detailed error message
+	EscalationValidationSum string // Validation summary if available
 }
 
 // WorkerInfo contains information about an active worker for display.
@@ -258,10 +260,38 @@ func (v *ImplementView) renderEscalationPrompt() string {
 
 	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("Reason: "))
 	b.WriteString(v.state.EscalationReason)
-	b.WriteString("\n")
+	b.WriteString("\n\n")
+
+	// Show detailed error if available
+	if v.state.EscalationErrorDetails != "" {
+		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")).Render("Error Details:"))
+		b.WriteString("\n")
+		errorBox := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("196")).
+			Padding(0, 1).
+			Width(v.width - 10)
+		b.WriteString(errorBox.Render(v.state.EscalationErrorDetails))
+		b.WriteString("\n\n")
+	}
+
+	// Show validation summary if available
+	if v.state.EscalationValidationSum != "" {
+		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")).Render("Validation Summary:"))
+		b.WriteString("\n")
+		validationBox := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("214")).
+			Padding(0, 1).
+			Width(v.width - 10)
+		b.WriteString(validationBox.Render(v.state.EscalationValidationSum))
+		b.WriteString("\n\n")
+	}
 
 	if v.state.EscalationLogFile != "" {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Log: "))
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("Full Log: "))
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(v.state.EscalationLogFile))
 		b.WriteString("\n")
 	}
@@ -458,6 +488,8 @@ func (a *ImplementApp) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		currentState.EscalationReason = msg.Reason
 		currentState.EscalationAttempts = msg.Attempts
 		currentState.EscalationLogFile = msg.LogFile
+		currentState.EscalationErrorDetails = msg.ErrorDetails
+		currentState.EscalationValidationSum = msg.ValidationSummary
 		a.view.SetState(currentState)
 
 		// Log escalation
@@ -606,11 +638,13 @@ type ImplementDoneMsg struct {
 
 // EscalationMsg is sent when a task needs user escalation.
 type EscalationMsg struct {
-	TaskID   string
-	TaskTitle string
-	Reason   string
-	Attempts int
-	LogFile  string
+	TaskID           string
+	TaskTitle        string
+	Reason           string
+	Attempts         int
+	LogFile          string
+	ErrorDetails     string // Detailed error from the execution result
+	ValidationSummary string // Summary from 4-layer validation if available
 }
 
 // EscalationResponseHandler is a callback for sending escalation responses.
