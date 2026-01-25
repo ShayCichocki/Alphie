@@ -29,6 +29,35 @@ DO:
 // This ensures code is not just syntactically correct but actually functional.
 const ValidationGuidancePrompt = `## Validation Requirements
 
+⚠️ CRITICAL: NO STUB IMPLEMENTATIONS ⚠️
+
+You MUST implement COMPLETE, WORKING functionality. The following are NOT acceptable:
+- Functions that return "Not implemented" or "TODO"
+- Empty function bodies that do nothing
+- Placeholder comments like "// Implementation goes here"
+- Handlers that just return errors without implementing logic
+- Database queries that are commented out or missing
+- API endpoints that return mock data instead of real data
+
+BAD examples (will cause task failure):
+❌ func CreateUser(w http.ResponseWriter, r *http.Request) {
+    http.Error(w, "Not implemented", http.StatusNotImplemented)
+}
+❌ func SaveToDatabase(user User) error {
+    // TODO: Implement database save
+    return nil
+}
+
+GOOD examples (complete implementations):
+✅ func CreateUser(w http.ResponseWriter, r *http.Request) {
+    var user User
+    if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+        http.Error(w, "Invalid request", http.StatusBadRequest)
+        return
+    }
+    // Hash password, save to DB, return response...
+}
+
 Before marking your task complete, you MUST verify your work:
 
 ### For Go Code:
@@ -57,8 +86,15 @@ Before marking your task complete, you MUST verify your work:
 1. **Consistency**: Ensure import paths, package names, and module references are consistent throughout
 2. **Completeness**: If you created a new project structure, ensure all initialization is done (go mod init, npm install, etc.)
 3. **Testing**: If the task involves runnable code, verify it actually starts/runs without immediate errors
+4. **No Stubs**: Search your code for stub patterns and implement them:
+   - Run: grep -r "Not implemented" . (should return nothing in your changes)
+   - Run: grep -r "TODO:" . (should not appear in function bodies you wrote)
+   - Verify: Every function you created has real logic, not just error returns
 
 CRITICAL: Do NOT complete the task if:
+- Any function returns "Not implemented" or similar stub responses
+- You have TODO comments in function bodies (design TODOs in comments are OK, but function TODOs are not)
+- Functions exist but don't do what they're supposed to (check the task description!)
 - Imports use wrong module names (check go.mod!)
 - Dependencies are missing (missing node_modules/ with package.json present)
 - Code doesn't compile

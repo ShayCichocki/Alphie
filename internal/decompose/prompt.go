@@ -53,4 +53,18 @@ Guidelines:
 - Acceptance criteria should be specific and verifiable
 - Use empty array [] for depends_on if there are no dependencies
 - For SETUP work: prefer 1-2 large tasks over many small ones (reduces merge conflicts)
-- NEVER create two tasks that both modify the same config file (package.json, tsconfig.json, etc.)`
+- NEVER create two tasks that both modify the same config file (package.json, tsconfig.json, etc.)
+
+⚠️ CRITICAL: FULL IMPLEMENTATIONS REQUIRED ⚠️
+- Each task description MUST specify COMPLETE, WORKING implementations
+- DO NOT create tasks that produce scaffolding, stubs, or placeholder code
+- EVERY function, endpoint, component must be FULLY FUNCTIONAL
+- Bad: "Create user authentication endpoints" (too vague - leads to stubs)
+- Good: "Implement complete user authentication with bcrypt password hashing, JWT session tokens, and working signup/login/logout endpoints that persist to database"
+- Bad: "Set up database layer" (leads to empty function stubs)
+- Good: "Implement complete database layer with connection pooling, all CRUD operations for users/boards/cards, transaction support, and error handling"
+
+Examples of FULL implementation task descriptions:
+- "Implement complete React board component with drag-and-drop using react-beautiful-dnd, state management via React Context, real-time updates, and proper error boundaries"
+- "Build complete REST API with: POST /auth/register (bcrypt hashing, validation), POST /auth/login (JWT generation), GET /auth/me (token verification), all with proper error responses and status codes"
+- "Create full database migration system with: up/down migrations, version tracking table, rollback support, and migrations for all entities (users, boards, lists, cards) with proper indexes and foreign keys"`

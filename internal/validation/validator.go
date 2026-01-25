@@ -122,6 +122,17 @@ func (v *Validator) Validate(ctx context.Context, input ValidationInput) (*Valid
 		Summary:   "",
 	}
 
+	// Layer 0: Stub Detection (fast fail)
+	layer0 := v.runLayer0StubDetection(ctx, input)
+	result.Layers.Layer1 = layer0
+	if !layer0.Passed {
+		result.AllPassed = false
+		result.FailureReason = "Stub implementations detected - code is incomplete"
+		result.Duration = time.Since(startTime)
+		result.Summary = v.buildSummary(result)
+		return result, nil
+	}
+
 	// Layer 1: Verification Contracts
 	layer1 := v.runLayer1(ctx, input)
 	result.Layers.Layer1 = layer1
