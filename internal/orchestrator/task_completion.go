@@ -309,7 +309,7 @@ func (o *Orchestrator) handleFailedTask(task *models.Task, result *agent.Executi
 		}
 	}
 
-	const maxRetries = 3
+	const maxRetries = 5
 	shouldRetry := task.ExecutionCount < maxRetries
 
 	if shouldRetry {

@@ -25,26 +25,26 @@ func (v *Validator) runLayer0StubDetection(ctx context.Context, input Validation
 
 	var foundStubs []string
 
+	// If no modified files provided, skip stub detection (can't check whole repo)
+	if len(input.ModifiedFiles) == 0 {
+		result.Output = "No modified files to check - skipping stub detection"
+		return result
+	}
+
+	// Only search in modified files
 	for _, pattern := range stubPatterns {
-		// Run grep to search for stub patterns in modified files
-		cmd := exec.CommandContext(ctx, "grep", "-r", "-n", pattern, input.RepoPath)
-		output, err := cmd.CombinedOutput()
-		
-		if err == nil && len(output) > 0 {
-			// Found matches
-			lines := strings.Split(string(output), "\n")
-			for _, line := range lines {
-				if strings.TrimSpace(line) != "" {
-					// Filter to only modified files if possible
-					shouldInclude := len(input.ModifiedFiles) == 0
-					for _, modFile := range input.ModifiedFiles {
-						if strings.Contains(line, modFile) {
-							shouldInclude = true
-							break
-						}
-					}
-					if shouldInclude {
-						foundStubs = append(foundStubs, fmt.Sprintf("  %s: %s", pattern, line))
+		for _, modFile := range input.ModifiedFiles {
+			// Run grep on each modified file individually
+			filePath := fmt.Sprintf("%s/%s", input.RepoPath, modFile)
+			cmd := exec.CommandContext(ctx, "grep", "-n", pattern, filePath)
+			output, err := cmd.CombinedOutput()
+
+			if err == nil && len(output) > 0 {
+				// Found matches in this file
+				lines := strings.Split(string(output), "\n")
+				for _, line := range lines {
+					if strings.TrimSpace(line) != "" {
+						foundStubs = append(foundStubs, fmt.Sprintf("  %s in %s: %s", pattern, modFile, line))
 					}
 				}
 			}

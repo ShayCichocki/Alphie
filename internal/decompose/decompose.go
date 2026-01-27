@@ -87,8 +87,10 @@ func (d *Decomposer) Decompose(ctx context.Context, request string) ([]*models.T
 		return nil, fmt.Errorf("validate dependencies: %w", err)
 	}
 
-	// Coalesce SETUP tasks that share critical files to prevent merge conflicts
-	tasks = CoalesceSetupTasks(tasks)
+	// DISABLED: Coalescing creates overly large tasks that agents can't complete
+	// The prompt already instructs to minimize SETUP tasks, so additional coalescing
+	// just makes things worse by bundling too much work into single tasks
+	// tasks = CoalesceSetupTasks(tasks)
 
 	return tasks, nil
 }

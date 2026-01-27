@@ -28,7 +28,7 @@ CRITICAL: File Boundary Rules
 - If a task touches a shared config file, it should likely be the ONLY task or run first
 
 Task Type Classification:
-- SETUP: Project scaffolding, configuration, initialization (prefer FEWER tasks)
+- SETUP: Project scaffolding, configuration, initialization (break into focused, atomic tasks)
 - FEATURE: New functionality implementation (can be parallelized if boundaries don't overlap)
 - BUGFIX: Fixing existing issues (usually single task)
 - REFACTOR: Code restructuring without behavior change
@@ -49,11 +49,11 @@ Examples of good verification_intent:
 Guidelines:
 - Tasks should be as independent as possible to allow parallel execution
 - Only add dependencies when truly necessary (task A must complete before task B)
-- Each task should be completable by a single agent in one session
+- Each task should be completable by a single agent in one session (aim for focused, atomic work)
 - Acceptance criteria should be specific and verifiable
 - Use empty array [] for depends_on if there are no dependencies
-- For SETUP work: prefer 1-2 large tasks over many small ones (reduces merge conflicts)
-- NEVER create two tasks that both modify the same config file (package.json, tsconfig.json, etc.)
+- Break work into focused tasks - avoid bundling multiple concerns into one task
+- It's OK to have tasks that share files if they're sequential (use depends_on to order them)
 
 ⚠️ CRITICAL: FULL IMPLEMENTATIONS REQUIRED ⚠️
 - Each task description MUST specify COMPLETE, WORKING implementations

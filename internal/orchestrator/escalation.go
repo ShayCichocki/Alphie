@@ -88,8 +88,8 @@ func (h *EscalationHandler) NeedsEscalation(task *models.Task, result *agent.Exe
 		}
 	}
 
-	// If execution count is >= max retries (3), escalation needed
-	if task.ExecutionCount >= 3 {
+	// If execution count is >= max retries (5), escalation needed
+	if task.ExecutionCount >= 5 {
 		return true
 	}
 
